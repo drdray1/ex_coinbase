@@ -2,6 +2,204 @@ defmodule ExCoinbase.OrdersTest do
   use ExUnit.Case, async: true
 
   alias ExCoinbase.Orders
+  alias ExCoinbase.Fixtures
+
+  @stub_name ExCoinbase.OrdersTest
+
+  # ============================================================================
+  # HTTP Endpoint Tests
+  # ============================================================================
+
+  describe "create_order/2" do
+    test "returns success for valid order" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      params = %{
+        product_id: "BTC-USD",
+        side: "BUY",
+        order_configuration: %{market_market_ioc: %{quote_size: "100"}}
+      }
+
+      assert {:ok, %{"success" => true}} = Orders.create_order(client, params)
+    end
+
+    test "returns validation error for missing product_id" do
+      client = Fixtures.test_client(@stub_name)
+
+      params = %{
+        side: "BUY",
+        order_configuration: %{market_market_ioc: %{quote_size: "100"}}
+      }
+
+      assert {:error, {:validation_error, errors}} = Orders.create_order(client, params)
+      assert "product_id is required" in errors
+    end
+  end
+
+  describe "market_order_quote/4" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, %{"success" => true}} =
+               Orders.market_order_quote(client, "BTC-USD", "BUY", "100")
+    end
+  end
+
+  describe "market_order_base/4" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, %{"success" => true}} =
+               Orders.market_order_base(client, "BTC-USD", "BUY", "0.001")
+    end
+  end
+
+  describe "limit_order_gtc/5" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, _} = Orders.limit_order_gtc(client, "BTC-USD", "BUY", "0.001", "50000")
+    end
+  end
+
+  describe "stop_limit_order_gtc/6" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, _} =
+               Orders.stop_limit_order_gtc(client, "BTC-USD", "SELL", "0.001", "49000", "48000")
+    end
+  end
+
+  describe "bracket_order_gtc/7" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, _} =
+               Orders.bracket_order_gtc(
+                 client,
+                 "BTC-USD",
+                 "BUY",
+                 "0.01",
+                 "45000",
+                 "50000",
+                 "43000"
+               )
+    end
+  end
+
+  describe "bracket_order_gtd/8" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, _} =
+               Orders.bracket_order_gtd(
+                 client,
+                 "BTC-USD",
+                 "BUY",
+                 "0.01",
+                 "45000",
+                 "50000",
+                 "43000",
+                 "2024-12-31T23:59:59Z"
+               )
+    end
+  end
+
+  describe "cancel_orders/2" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_cancel_orders_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, %{"results" => results}} =
+               Orders.cancel_orders(client, ["order-1", "order-2"])
+
+      assert length(results) == 2
+    end
+  end
+
+  describe "cancel_order/2" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"results" => [%{"success" => true, "order_id" => "order-1"}]})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, %{"results" => [%{"success" => true}]}} =
+               Orders.cancel_order(client, "order-1")
+    end
+  end
+
+  describe "list_orders/2" do
+    test "returns orders on success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_orders_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"orders" => orders}} = Orders.list_orders(client)
+      assert length(orders) == 2
+    end
+  end
+
+  describe "get_order/2" do
+    test "returns order on success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_single_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"order" => order}} = Orders.get_order(client, "order-1")
+      assert order["order_id"] == "order-1"
+    end
+  end
+
+  describe "list_fills/2" do
+    test "returns fills on success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_fills_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"fills" => fills}} = Orders.list_fills(client)
+      assert length(fills) == 1
+    end
+  end
+
+  # ============================================================================
+  # Pure Function Tests
+  # ============================================================================
 
   describe "validate_order_params/1" do
     test "returns ok for valid params" do

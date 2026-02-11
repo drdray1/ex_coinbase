@@ -4,6 +4,36 @@ defmodule ExCoinbase.FeesTest do
   alias ExCoinbase.Fees
   alias ExCoinbase.Fixtures
 
+  @stub_name ExCoinbase.FeesTest
+
+  # ============================================================================
+  # HTTP Endpoint Tests
+  # ============================================================================
+
+  describe "get_transaction_summary/2" do
+    test "returns summary on success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_transaction_summary_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"fee_tier" => _}} = Fees.get_transaction_summary(client)
+    end
+
+    test "returns error on unauthorized" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(401) |> Req.Test.json(%{"error" => "Unauthorized"})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, :unauthorized} = Fees.get_transaction_summary(client)
+    end
+  end
+
+  # ============================================================================
+  # Pure Function Tests
+  # ============================================================================
+
   describe "maker_fee_rate/1" do
     test "extracts maker fee rate as decimal" do
       summary = Fixtures.sample_transaction_summary_response()

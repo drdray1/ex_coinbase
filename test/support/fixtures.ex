@@ -333,4 +333,99 @@ defmodule ExCoinbase.Fixtures do
       ]
     }
   end
+
+  # ===========================================================================
+  # Test Client Factory
+  # ===========================================================================
+
+  # P-256 key required for JWT ES256 signing (used in HTTP integration tests)
+  def sample_p256_private_key_pem do
+    """
+    -----BEGIN EC PRIVATE KEY-----
+    MHcCAQEEIJu/Ze6KwFX6kqjf0YTCwuFtFwcaIA6NfRc2XaioC8DdoAoGCCqGSM49
+    AwEHoUQDQgAE6ob5+ow9MXBF4R28xeIzj5djEWB9OM681bQ2IlqjV4LJAKdRyPRX
+    7cjqMZo/TspePuKrd936h3l17oeU4qlgHw==
+    -----END EC PRIVATE KEY-----
+    """
+  end
+
+  def test_client(stub_name) do
+    sample_api_key()
+    |> ExCoinbase.Client.new(
+      sample_p256_private_key_pem(),
+      plug: {Req.Test, stub_name}
+    )
+    |> Req.Request.merge_options(retry: false)
+  end
+
+  # ===========================================================================
+  # Additional API Response Fixtures
+  # ===========================================================================
+
+  def sample_market_trades_response do
+    %{
+      "trades" => [
+        %{
+          "trade_id" => "trade-1",
+          "product_id" => "BTC-USD",
+          "price" => "50000.00",
+          "size" => "0.1",
+          "time" => "2024-01-01T00:00:00Z",
+          "side" => "BUY"
+        }
+      ],
+      "best_bid" => "49999.00",
+      "best_ask" => "50001.00"
+    }
+  end
+
+  def sample_best_bid_ask_response do
+    %{
+      "pricebooks" => [
+        %{
+          "product_id" => "BTC-USD",
+          "bids" => [%{"price" => "49999.00", "size" => "1.0"}],
+          "asks" => [%{"price" => "50001.00", "size" => "1.0"}]
+        }
+      ]
+    }
+  end
+
+  def sample_product_book_response do
+    %{
+      "pricebook" => %{
+        "product_id" => "BTC-USD",
+        "bids" => [%{"price" => "49999.00", "size" => "1.0"}],
+        "asks" => [%{"price" => "50001.00", "size" => "1.0"}]
+      }
+    }
+  end
+
+  def sample_single_order_response do
+    %{
+      "order" => %{
+        "order_id" => "order-1",
+        "product_id" => "BTC-USD",
+        "side" => "BUY",
+        "status" => "FILLED"
+      }
+    }
+  end
+
+  def sample_portfolio_response do
+    %{
+      "portfolio" => %{
+        "uuid" => "portfolio-uuid",
+        "name" => "Trading Portfolio",
+        "type" => "CONSUMER"
+      }
+    }
+  end
+
+  def sample_move_funds_response do
+    %{
+      "source_portfolio_uuid" => "source-uuid",
+      "target_portfolio_uuid" => "target-uuid"
+    }
+  end
 end

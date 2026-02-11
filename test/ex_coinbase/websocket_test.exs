@@ -132,4 +132,110 @@ defmodule ExCoinbase.WebSocketTest do
       assert WebSocket.jwt_refresh_interval_ms() == 100_000
     end
   end
+
+  describe "build_authenticated_subscribe/3" do
+    @test_api_key "organizations/test-org-123/apiKeys/test-key-456"
+    @test_private_key """
+    -----BEGIN EC PRIVATE KEY-----
+    MHcCAQEEIJu/Ze6KwFX6kqjf0YTCwuFtFwcaIA6NfRc2XaioC8DdoAoGCCqGSM49
+    AwEHoUQDQgAE6ob5+ow9MXBF4R28xeIzj5djEWB9OM681bQ2IlqjV4LJAKdRyPRX
+    7cjqMZo/TspePuKrd936h3l17oeU4qlgHw==
+    -----END EC PRIVATE KEY-----
+    """
+
+    test "returns {:ok, message} with JWT for valid credentials" do
+      assert {:ok, message} =
+               WebSocket.build_authenticated_subscribe(@test_api_key, @test_private_key, [
+                 "BTC-USD"
+               ])
+
+      assert message["type"] == "subscribe"
+      assert message["channel"] == "user"
+      assert message["product_ids"] == ["BTC-USD"]
+      assert is_binary(message["jwt"])
+    end
+
+    test "returns {:error, _} for invalid private key" do
+      assert {:error, _} =
+               WebSocket.build_authenticated_subscribe(@test_api_key, "invalid", ["BTC-USD"])
+    end
+  end
+
+  describe "parse_event_from_map/1" do
+    test "returns {:error, {:unknown_channel, channel}} for unknown channel" do
+      data = %{"channel" => "unknown_channel", "events" => []}
+
+      assert {:error, {:unknown_channel, "unknown_channel"}} =
+               WebSocket.parse_event_from_map(data)
+    end
+
+    test "handles error event without message key" do
+      data = %{"type" => "error", "reason" => "Something went wrong"}
+
+      assert {:error, {:server_error, "Something went wrong"}} =
+               WebSocket.parse_event_from_map(data)
+    end
+
+    test "returns unknown error for error event without message or reason" do
+      data = %{"type" => "error"}
+      assert {:error, {:server_error, "Unknown error"}} = WebSocket.parse_event_from_map(data)
+    end
+  end
+
+  describe "parse_order_update/1" do
+    test "handles single order update event" do
+      data = %{
+        "type" => "update",
+        "order" => %{
+          "order_id" => "order-456",
+          "product_id" => "ETH-USD",
+          "side" => "SELL",
+          "status" => "FILLED"
+        }
+      }
+
+      updates = WebSocket.parse_order_update(data)
+      assert length(updates) == 1
+      [update] = updates
+      assert update.order_id == "order-456"
+      assert update.type == "update"
+    end
+
+    test "handles fallback when no orders or order key" do
+      data = %{"type" => "update", "order_id" => "order-789", "product_id" => "BTC-USD"}
+      updates = WebSocket.parse_order_update(data)
+      assert length(updates) == 1
+      [update] = updates
+      assert update.order_id == "order-789"
+    end
+  end
+
+  describe "parse_heartbeat_event/1" do
+    test "handles event with no events list" do
+      data = %{"channel" => "heartbeats", "timestamp" => "2024-01-01T00:00:00Z"}
+      event = WebSocket.parse_heartbeat_event(data)
+      assert %WebSocket.HeartbeatEvent{} = event
+      assert event.current_time == nil
+      assert event.heartbeat_counter == nil
+    end
+  end
+
+  describe "jwt_expiry_seconds/0" do
+    test "returns 120" do
+      assert WebSocket.jwt_expiry_seconds() == 120
+    end
+  end
+
+  describe "jwt_refresh_buffer_seconds/0" do
+    test "returns 20" do
+      assert WebSocket.jwt_refresh_buffer_seconds() == 20
+    end
+  end
+
+  describe "websocket_user_url/0" do
+    test "returns user websocket URL" do
+      url = WebSocket.websocket_user_url()
+      assert String.contains?(url, "advanced-trade-ws-user.coinbase.com")
+    end
+  end
 end
