@@ -420,7 +420,7 @@ defmodule ExCoinbase.WebSocket.Connection do
   end
 
   defp send_unsubscribe(state, products) do
-    if state.websocket_pid and products != [] do
+    if state.websocket_pid && products != [] do
       unsubscribe_msg = WebSocket.build_unsubscribe_message("user", products)
       StreamClient.send_message(state.websocket_pid, unsubscribe_msg)
     end

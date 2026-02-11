@@ -2,6 +2,74 @@ defmodule ExCoinbase.AccountsTest do
   use ExUnit.Case, async: true
 
   alias ExCoinbase.Accounts
+  alias ExCoinbase.Fixtures
+
+  @stub_name ExCoinbase.AccountsTest
+
+  # ============================================================================
+  # HTTP Endpoint Tests
+  # ============================================================================
+
+  describe "list_accounts/2" do
+    test "returns accounts on successful request" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_accounts_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"accounts" => accounts}} = Accounts.list_accounts(client)
+      assert length(accounts) == 2
+    end
+
+    test "returns error for unauthorized request" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn
+        |> Plug.Conn.put_status(401)
+        |> Req.Test.json(%{"error" => "Unauthorized"})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, :unauthorized} = Accounts.list_accounts(client)
+    end
+
+    test "returns error for rate limiting" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn
+        |> Plug.Conn.put_status(429)
+        |> Req.Test.json(%{"error" => "Rate limited"})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, :rate_limited} = Accounts.list_accounts(client)
+    end
+  end
+
+  describe "get_account/2" do
+    test "returns account on success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_account_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"account" => account}} = Accounts.get_account(client, "test-account-uuid")
+      assert account["uuid"] == "test-account-uuid"
+    end
+
+    test "returns error for not found" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn
+        |> Plug.Conn.put_status(404)
+        |> Req.Test.json(%{"error" => "Not found"})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, :not_found} = Accounts.get_account(client, "nonexistent-uuid")
+    end
+  end
+
+  # ============================================================================
+  # Pure Function Tests
+  # ============================================================================
 
   describe "extract_accounts/1" do
     test "extracts accounts from valid response" do

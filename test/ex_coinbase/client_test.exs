@@ -142,4 +142,57 @@ defmodule ExCoinbase.ClientTest do
       assert {:error, {:invalid_private_key, _}} = Client.verify_credentials(api_key, invalid_pem)
     end
   end
+
+  describe "healthcheck/1" do
+    @stub_name ExCoinbase.ClientTest.Healthcheck
+
+    test "returns :ok for 200 response" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"accounts" => []})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert :ok = Client.healthcheck(client)
+    end
+
+    test "returns {:error, :unauthorized} for 401" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(401) |> Req.Test.json(%{})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, :unauthorized} = Client.healthcheck(client)
+    end
+
+    test "returns {:error, :forbidden} for 403" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(403) |> Req.Test.json(%{})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, :forbidden} = Client.healthcheck(client)
+    end
+
+    test "returns {:error, {:unexpected_status, _}} for other status" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{})
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, {:unexpected_status, 500}} = Client.healthcheck(client)
+    end
+  end
+
+  describe "websocket_url/0" do
+    test "returns default websocket URL" do
+      url = Client.websocket_url()
+      assert String.contains?(url, "advanced-trade-ws.coinbase.com")
+    end
+  end
+
+  describe "timeout/0" do
+    test "returns default timeout" do
+      assert Client.timeout() == 30_000
+    end
+  end
 end
