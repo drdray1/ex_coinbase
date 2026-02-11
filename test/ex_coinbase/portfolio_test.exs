@@ -1,8 +1,8 @@
 defmodule ExCoinbase.PortfolioTest do
   use ExUnit.Case, async: true
 
-  alias ExCoinbase.Portfolio
   alias ExCoinbase.Fixtures
+  alias ExCoinbase.Portfolio
 
   @stub_name ExCoinbase.PortfolioTest
 
