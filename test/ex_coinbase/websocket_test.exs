@@ -1,8 +1,8 @@
 defmodule ExCoinbase.WebSocketTest do
   use ExUnit.Case, async: true
 
-  alias ExCoinbase.WebSocket
   alias ExCoinbase.Fixtures
+  alias ExCoinbase.WebSocket
 
   describe "build_subscribe_message/3" do
     test "builds user channel subscribe message with JWT" do

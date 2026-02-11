@@ -1,8 +1,11 @@
 defmodule ExCoinbase.ClientTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  use Mimic
 
   alias ExCoinbase.Client
   alias ExCoinbase.Fixtures
+
+  setup :verify_on_exit!
 
   describe "new/3" do
     test "creates a Req.Request struct" do
@@ -141,6 +144,73 @@ defmodule ExCoinbase.ClientTest do
 
       assert {:error, {:invalid_private_key, _}} = Client.verify_credentials(api_key, invalid_pem)
     end
+
+    test "returns {:ok, body} for 200 response" do
+      expect(Req, :get, fn _client, _opts ->
+        {:ok, %Req.Response{status: 200, body: %{"accounts" => []}}}
+      end)
+
+      api_key = Fixtures.sample_api_key()
+      pem = Fixtures.sample_p256_private_key_pem()
+
+      assert {:ok, %{"accounts" => []}} = Client.verify_credentials(api_key, pem)
+    end
+
+    test "returns {:error, :unauthorized} for 401 response" do
+      expect(Req, :get, fn _client, _opts ->
+        {:ok, %Req.Response{status: 401, body: %{"error" => "Unauthorized"}}}
+      end)
+
+      api_key = Fixtures.sample_api_key()
+      pem = Fixtures.sample_p256_private_key_pem()
+
+      assert {:error, :unauthorized} = Client.verify_credentials(api_key, pem)
+    end
+
+    test "returns {:error, :forbidden} for 403 response" do
+      expect(Req, :get, fn _client, _opts ->
+        {:ok, %Req.Response{status: 403, body: %{"error" => "Forbidden"}}}
+      end)
+
+      api_key = Fixtures.sample_api_key()
+      pem = Fixtures.sample_p256_private_key_pem()
+
+      assert {:error, :forbidden} = Client.verify_credentials(api_key, pem)
+    end
+
+    test "returns {:error, {:invalid_credentials, _}} for JWT generation failure" do
+      expect(Req, :get, fn _client, _opts ->
+        {:ok, %Req.Response{status: 0, body: {:jwt_generation_failed, :bad_key}}}
+      end)
+
+      api_key = Fixtures.sample_api_key()
+      pem = Fixtures.sample_p256_private_key_pem()
+
+      assert {:error, {:invalid_credentials, :bad_key}} = Client.verify_credentials(api_key, pem)
+    end
+
+    test "returns {:error, {:api_error, status, message}} for other errors" do
+      expect(Req, :get, fn _client, _opts ->
+        {:ok, %Req.Response{status: 500, body: %{"error" => "Internal error"}}}
+      end)
+
+      api_key = Fixtures.sample_api_key()
+      pem = Fixtures.sample_p256_private_key_pem()
+
+      assert {:error, {:api_error, 500, "Internal error"}} =
+               Client.verify_credentials(api_key, pem)
+    end
+
+    test "returns {:error, {:connection_error, reason}} for connection failures" do
+      expect(Req, :get, fn _client, _opts ->
+        {:error, %Mint.TransportError{reason: :econnrefused}}
+      end)
+
+      api_key = Fixtures.sample_api_key()
+      pem = Fixtures.sample_p256_private_key_pem()
+
+      assert {:error, {:connection_error, _}} = Client.verify_credentials(api_key, pem)
+    end
   end
 
   describe "healthcheck/1" do
@@ -181,12 +251,37 @@ defmodule ExCoinbase.ClientTest do
       client = Fixtures.test_client(@stub_name)
       assert {:error, {:unexpected_status, 500}} = Client.healthcheck(client)
     end
+
+    test "returns {:error, {:jwt_error, _}} for JWT generation failure" do
+      expect(Req, :get, fn _client, _opts ->
+        {:ok, %Req.Response{status: 0, body: {:jwt_generation_failed, :bad_key}}}
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, {:jwt_error, :bad_key}} = Client.healthcheck(client)
+    end
+
+    test "returns {:error, reason} for connection errors" do
+      expect(Req, :get, fn _client, _opts ->
+        {:error, %Mint.TransportError{reason: :timeout}}
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, %Mint.TransportError{reason: :timeout}} = Client.healthcheck(client)
+    end
   end
 
   describe "websocket_url/0" do
     test "returns default websocket URL" do
       url = Client.websocket_url()
       assert String.contains?(url, "advanced-trade-ws.coinbase.com")
+    end
+  end
+
+  describe "websocket_user_url/0" do
+    test "returns default user websocket URL" do
+      url = Client.websocket_user_url()
+      assert String.contains?(url, "advanced-trade-ws-user.coinbase.com")
     end
   end
 

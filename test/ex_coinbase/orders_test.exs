@@ -1,8 +1,8 @@
 defmodule ExCoinbase.OrdersTest do
   use ExUnit.Case, async: true
 
-  alias ExCoinbase.Orders
   alias ExCoinbase.Fixtures
+  alias ExCoinbase.Orders
 
   @stub_name ExCoinbase.OrdersTest
 

@@ -4,5 +4,6 @@ Mimic.copy(WebSockex)
 Mimic.copy(ExCoinbase.WebSocket.Client)
 Mimic.copy(ExCoinbase.WebSocket)
 Mimic.copy(ExCoinbase.JWT)
+Mimic.copy(Req)
 
 ExUnit.start()
