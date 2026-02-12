@@ -238,4 +238,104 @@ defmodule ExCoinbase.WebSocketTest do
       assert String.contains?(url, "advanced-trade-ws-user.coinbase.com")
     end
   end
+
+  # ============================================================================
+  # Market Data Event Parsing
+  # ============================================================================
+
+  describe "parse_level2_event/1" do
+    test "parses level2 snapshot event" do
+      data = Fixtures.sample_level2_event()
+      event = WebSocket.parse_level2_event(data)
+
+      assert %WebSocket.Level2Event{} = event
+      assert event.channel == "l2_data"
+      assert event.product_id == "BTC-USD"
+      assert length(event.updates) == 2
+    end
+
+    test "handles empty events list" do
+      data = %{"channel" => "l2_data", "events" => []}
+      event = WebSocket.parse_level2_event(data)
+      assert event.product_id == nil
+      assert event.updates == []
+    end
+  end
+
+  describe "parse_ticker_event/1" do
+    test "parses ticker snapshot event" do
+      data = Fixtures.sample_ticker_event()
+      event = WebSocket.parse_ticker_event(data)
+
+      assert %WebSocket.TickerEvent{} = event
+      assert event.channel == "ticker"
+      assert length(event.tickers) == 1
+      [ticker] = event.tickers
+      assert ticker["product_id"] == "BTC-USD"
+      assert ticker["price"] == "50000.00"
+    end
+  end
+
+  describe "parse_ticker_batch_event/1" do
+    test "parses ticker_batch event" do
+      data = Fixtures.sample_ticker_batch_event()
+      event = WebSocket.parse_ticker_batch_event(data)
+
+      assert %WebSocket.TickerBatchEvent{} = event
+      assert event.channel == "ticker_batch"
+      assert length(event.tickers) == 2
+    end
+  end
+
+  describe "parse_market_trades_event/1" do
+    test "parses market_trades event" do
+      data = Fixtures.sample_market_trades_ws_event()
+      event = WebSocket.parse_market_trades_event(data)
+
+      assert %WebSocket.MarketTradesEvent{} = event
+      assert event.channel == "market_trades"
+      assert length(event.trades) == 1
+      [trade] = event.trades
+      assert trade["trade_id"] == "trade-1"
+    end
+  end
+
+  describe "parse_event/1 with market data channels" do
+    test "parses l2_data channel" do
+      json = Jason.encode!(Fixtures.sample_level2_event())
+      assert {:ok, :level2, %WebSocket.Level2Event{}} = WebSocket.parse_event(json)
+    end
+
+    test "parses ticker channel" do
+      json = Jason.encode!(Fixtures.sample_ticker_event())
+      assert {:ok, :ticker, %WebSocket.TickerEvent{}} = WebSocket.parse_event(json)
+    end
+
+    test "parses ticker_batch channel" do
+      json = Jason.encode!(Fixtures.sample_ticker_batch_event())
+      assert {:ok, :ticker_batch, %WebSocket.TickerBatchEvent{}} = WebSocket.parse_event(json)
+    end
+
+    test "parses market_trades channel" do
+      json = Jason.encode!(Fixtures.sample_market_trades_ws_event())
+      assert {:ok, :market_trades, %WebSocket.MarketTradesEvent{}} = WebSocket.parse_event(json)
+    end
+  end
+
+  describe "valid_market_channels/0" do
+    test "returns the four market data channels" do
+      channels = WebSocket.valid_market_channels()
+      assert "level2" in channels
+      assert "ticker" in channels
+      assert "ticker_batch" in channels
+      assert "market_trades" in channels
+    end
+  end
+
+  describe "websocket_url/0" do
+    test "returns public websocket URL" do
+      url = WebSocket.websocket_url()
+      assert String.contains?(url, "advanced-trade-ws.coinbase.com")
+    end
+  end
 end

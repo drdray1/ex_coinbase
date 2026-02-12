@@ -130,6 +130,81 @@ defmodule ExCoinbase.Orders do
   end
 
   @doc """
+  Creates a limit order with Immediate-or-Cancel duration.
+
+  The order executes immediately at the limit price or better;
+  any unfilled portion is cancelled.
+
+  ## Examples
+
+      iex> limit_order_ioc(client, "BTC-USD", "BUY", "0.001", "50000")
+      {:ok, %{"order_id" => "..."}}
+  """
+  @spec limit_order_ioc(client(), product_id(), String.t(), String.t(), String.t()) :: response()
+  def limit_order_ioc(client, product_id, side, base_size, limit_price) do
+    create_order(client, %{
+      product_id: product_id,
+      side: side,
+      order_configuration: %{
+        limit_limit_ioc: %{
+          base_size: base_size,
+          limit_price: limit_price
+        }
+      }
+    })
+  end
+
+  @doc """
+  Creates a limit order with Good-Til-Date duration.
+
+  The order remains active until the specified `end_time`.
+
+  ## Examples
+
+      iex> limit_order_gtd(client, "BTC-USD", "BUY", "0.001", "50000", "2024-12-31T23:59:59Z")
+      {:ok, %{"order_id" => "..."}}
+  """
+  @spec limit_order_gtd(client(), product_id(), String.t(), String.t(), String.t(), String.t()) ::
+          response()
+  def limit_order_gtd(client, product_id, side, base_size, limit_price, end_time) do
+    create_order(client, %{
+      product_id: product_id,
+      side: side,
+      order_configuration: %{
+        limit_limit_gtd: %{
+          base_size: base_size,
+          limit_price: limit_price,
+          end_time: end_time
+        }
+      }
+    })
+  end
+
+  @doc """
+  Creates a limit order with Fill-or-Kill duration.
+
+  The order must be filled entirely and immediately, or it is cancelled completely.
+
+  ## Examples
+
+      iex> limit_order_fok(client, "BTC-USD", "BUY", "0.001", "50000")
+      {:ok, %{"order_id" => "..."}}
+  """
+  @spec limit_order_fok(client(), product_id(), String.t(), String.t(), String.t()) :: response()
+  def limit_order_fok(client, product_id, side, base_size, limit_price) do
+    create_order(client, %{
+      product_id: product_id,
+      side: side,
+      order_configuration: %{
+        limit_limit_fok: %{
+          base_size: base_size,
+          limit_price: limit_price
+        }
+      }
+    })
+  end
+
+  @doc """
   Creates a stop-limit order with Good-Til-Canceled duration.
 
   ## Examples
@@ -154,6 +229,38 @@ defmodule ExCoinbase.Orders do
           base_size: base_size,
           limit_price: limit_price,
           stop_price: stop_price
+        }
+      }
+    })
+  end
+
+  @doc """
+  Creates a stop-limit order with Good-Til-Date duration.
+
+  ## Examples
+
+      iex> stop_limit_order_gtd(client, "BTC-USD", "SELL", "0.001", "49000", "48000", "2024-12-31T23:59:59Z")
+      {:ok, %{"order_id" => "..."}}
+  """
+  @spec stop_limit_order_gtd(
+          client(),
+          product_id(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t()
+        ) :: response()
+  def stop_limit_order_gtd(client, product_id, side, base_size, limit_price, stop_price, end_time) do
+    create_order(client, %{
+      product_id: product_id,
+      side: side,
+      order_configuration: %{
+        stop_limit_stop_limit_gtd: %{
+          base_size: base_size,
+          limit_price: limit_price,
+          stop_price: stop_price,
+          end_time: end_time
         }
       }
     })
@@ -254,6 +361,125 @@ defmodule ExCoinbase.Orders do
         }
       }
     })
+  end
+
+  # ============================================================================
+  # Order Editing
+  # ============================================================================
+
+  @doc """
+  Edits an existing order's price and/or size.
+
+  At least one of `:price` or `:size` must be provided.
+
+  ## Options
+
+    - `:price` - New price (optional)
+    - `:size` - New size (optional)
+
+  ## Examples
+
+      iex> edit_order(client, "order-123", price: "51000", size: "0.002")
+      {:ok, %{"success" => true, ...}}
+  """
+  @spec edit_order(client(), order_id(), keyword()) :: response()
+  def edit_order(client, order_id, opts \\ []) do
+    with {:ok, body} <- validate_edit_order_params(order_id, opts) do
+      client
+      |> Req.post(url: "/orders/edit", json: body)
+      |> Client.handle_response()
+    end
+  end
+
+  @doc """
+  Previews an order edit without executing it.
+
+  Returns estimated fees, slippage, and the resulting order state.
+  Same parameters as `edit_order/3`.
+
+  ## Examples
+
+      iex> edit_order_preview(client, "order-123", price: "51000")
+      {:ok, %{"slippage" => "0.01", ...}}
+  """
+  @spec edit_order_preview(client(), order_id(), keyword()) :: response()
+  def edit_order_preview(client, order_id, opts \\ []) do
+    with {:ok, body} <- validate_edit_order_params(order_id, opts) do
+      client
+      |> Req.post(url: "/orders/edit_preview", json: body)
+      |> Client.handle_response()
+    end
+  end
+
+  # ============================================================================
+  # Order Preview
+  # ============================================================================
+
+  @doc """
+  Previews an order without executing it.
+
+  Takes the same parameters as `create_order/2` and returns estimated
+  commission, fees, quote information, and best bid/ask.
+
+  ## Examples
+
+      iex> preview_order(client, %{
+      ...>   product_id: "BTC-USD",
+      ...>   side: "BUY",
+      ...>   order_configuration: %{market_market_ioc: %{quote_size: "100"}}
+      ...> })
+      {:ok, %{"commission_total" => "0.60", ...}}
+  """
+  @spec preview_order(client(), map()) :: response()
+  def preview_order(client, params) do
+    with {:ok, validated} <- validate_create_order_params(params) do
+      body = build_order_body(validated)
+
+      client
+      |> Req.post(url: "/orders/preview", json: body)
+      |> Client.handle_response()
+    end
+  end
+
+  # ============================================================================
+  # Position Management
+  # ============================================================================
+
+  @doc """
+  Closes an open position.
+
+  ## Parameters
+
+    - `client` - Authenticated client
+    - `client_order_id` - A unique identifier for the close order
+    - `product_id` - The product to close position for
+    - `opts` - Options
+      - `:size` - Partial close size (optional; omit for full close)
+
+  ## Examples
+
+      iex> close_position(client, "close-order-123", "BTC-USD")
+      {:ok, %{"success" => true, ...}}
+
+      iex> close_position(client, "close-order-123", "BTC-USD", size: "0.5")
+      {:ok, %{"success" => true, ...}}
+  """
+  @spec close_position(client(), String.t(), product_id(), keyword()) :: response()
+  def close_position(client, client_order_id, product_id, opts \\ []) do
+    body = %{
+      client_order_id: client_order_id,
+      product_id: product_id
+    }
+
+    body =
+      case Keyword.get(opts, :size) do
+        nil -> body
+        size -> Map.put(body, :size, size)
+      end
+
+    client
+    |> Req.post(url: "/orders/close_position", json: body)
+    |> Client.handle_response()
   end
 
   # ============================================================================
@@ -459,6 +685,21 @@ defmodule ExCoinbase.Orders do
   # ============================================================================
   # Private Functions
   # ============================================================================
+
+  @spec validate_edit_order_params(order_id(), keyword()) :: {:ok, map()} | {:error, term()}
+  defp validate_edit_order_params(order_id, opts) do
+    price = Keyword.get(opts, :price)
+    size = Keyword.get(opts, :size)
+
+    if is_nil(price) and is_nil(size) do
+      {:error, {:validation_error, ["at least one of price or size is required"]}}
+    else
+      body = %{order_id: order_id}
+      body = if price, do: Map.put(body, :price, price), else: body
+      body = if size, do: Map.put(body, :size, size), else: body
+      {:ok, body}
+    end
+  end
 
   @spec validate_create_order_params(map()) :: {:ok, map()} | {:error, term()}
   defp validate_create_order_params(params) do

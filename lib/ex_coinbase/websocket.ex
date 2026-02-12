@@ -122,6 +122,102 @@ defmodule ExCoinbase.WebSocket do
           }
   end
 
+  defmodule Level2Event do
+    @moduledoc """
+    Represents a level2 (order book) event from the Coinbase WebSocket.
+
+    Contains order book snapshot or update data with bids and asks.
+    """
+    defstruct [
+      :channel,
+      :client_id,
+      :timestamp,
+      :sequence_num,
+      :product_id,
+      :updates
+    ]
+
+    @type t :: %__MODULE__{
+            channel: String.t(),
+            client_id: String.t(),
+            timestamp: String.t(),
+            sequence_num: integer(),
+            product_id: String.t() | nil,
+            updates: [map()]
+          }
+  end
+
+  defmodule TickerEvent do
+    @moduledoc """
+    Represents a ticker event from the Coinbase WebSocket.
+
+    Contains real-time price information for a product.
+    """
+    defstruct [
+      :channel,
+      :client_id,
+      :timestamp,
+      :sequence_num,
+      :tickers
+    ]
+
+    @type t :: %__MODULE__{
+            channel: String.t(),
+            client_id: String.t(),
+            timestamp: String.t(),
+            sequence_num: integer(),
+            tickers: [map()]
+          }
+  end
+
+  defmodule TickerBatchEvent do
+    @moduledoc """
+    Represents a ticker_batch event from the Coinbase WebSocket.
+
+    Contains batched ticker updates for multiple products.
+    """
+    defstruct [
+      :channel,
+      :client_id,
+      :timestamp,
+      :sequence_num,
+      :tickers
+    ]
+
+    @type t :: %__MODULE__{
+            channel: String.t(),
+            client_id: String.t(),
+            timestamp: String.t(),
+            sequence_num: integer(),
+            tickers: [map()]
+          }
+  end
+
+  defmodule MarketTradesEvent do
+    @moduledoc """
+    Represents a market_trades event from the Coinbase WebSocket.
+
+    Contains real-time trade execution data.
+    """
+    defstruct [
+      :channel,
+      :client_id,
+      :timestamp,
+      :sequence_num,
+      :trades
+    ]
+
+    @type t :: %__MODULE__{
+            channel: String.t(),
+            client_id: String.t(),
+            timestamp: String.t(),
+            sequence_num: integer(),
+            trades: [map()]
+          }
+  end
+
+  @valid_market_channels ~w(level2 ticker ticker_batch market_trades)
+
   # ============================================================================
   # Message Building
   # ============================================================================
@@ -261,6 +357,22 @@ defmodule ExCoinbase.WebSocket do
     {:ok, :subscriptions, data}
   end
 
+  def parse_event_from_map(%{"channel" => "l2_data"} = data) do
+    {:ok, :level2, parse_level2_event(data)}
+  end
+
+  def parse_event_from_map(%{"channel" => "ticker"} = data) do
+    {:ok, :ticker, parse_ticker_event(data)}
+  end
+
+  def parse_event_from_map(%{"channel" => "ticker_batch"} = data) do
+    {:ok, :ticker_batch, parse_ticker_batch_event(data)}
+  end
+
+  def parse_event_from_map(%{"channel" => "market_trades"} = data) do
+    {:ok, :market_trades, parse_market_trades_event(data)}
+  end
+
   def parse_event_from_map(%{"channel" => channel}) do
     {:error, {:unknown_channel, channel}}
   end
@@ -353,6 +465,91 @@ defmodule ExCoinbase.WebSocket do
     }
   end
 
+  @doc """
+  Parses a level2 (order book) event from a decoded JSON map.
+  """
+  @spec parse_level2_event(map()) :: Level2Event.t()
+  def parse_level2_event(data) when is_map(data) do
+    events = data["events"] || []
+
+    product_id =
+      case events do
+        [%{"product_id" => pid} | _] -> pid
+        _ -> nil
+      end
+
+    updates =
+      Enum.flat_map(events, fn event ->
+        event["updates"] || []
+      end)
+
+    %Level2Event{
+      channel: data["channel"],
+      client_id: data["client_id"],
+      timestamp: data["timestamp"],
+      sequence_num: data["sequence_num"],
+      product_id: product_id,
+      updates: updates
+    }
+  end
+
+  @doc """
+  Parses a ticker event from a decoded JSON map.
+  """
+  @spec parse_ticker_event(map()) :: TickerEvent.t()
+  def parse_ticker_event(data) when is_map(data) do
+    tickers =
+      Enum.flat_map(data["events"] || [], fn event ->
+        event["tickers"] || []
+      end)
+
+    %TickerEvent{
+      channel: data["channel"],
+      client_id: data["client_id"],
+      timestamp: data["timestamp"],
+      sequence_num: data["sequence_num"],
+      tickers: tickers
+    }
+  end
+
+  @doc """
+  Parses a ticker_batch event from a decoded JSON map.
+  """
+  @spec parse_ticker_batch_event(map()) :: TickerBatchEvent.t()
+  def parse_ticker_batch_event(data) when is_map(data) do
+    tickers =
+      Enum.flat_map(data["events"] || [], fn event ->
+        event["tickers"] || []
+      end)
+
+    %TickerBatchEvent{
+      channel: data["channel"],
+      client_id: data["client_id"],
+      timestamp: data["timestamp"],
+      sequence_num: data["sequence_num"],
+      tickers: tickers
+    }
+  end
+
+  @doc """
+  Parses a market_trades event from a decoded JSON map.
+  """
+  @spec parse_market_trades_event(map()) :: MarketTradesEvent.t()
+  def parse_market_trades_event(data) when is_map(data) do
+    trades =
+      Enum.flat_map(data["events"] || [], fn event ->
+        event["trades"] || []
+      end)
+
+    %MarketTradesEvent{
+      channel: data["channel"],
+      client_id: data["client_id"],
+      timestamp: data["timestamp"],
+      sequence_num: data["sequence_num"],
+      trades: trades
+    }
+  end
+
   # ============================================================================
   # Utility Functions
   # ============================================================================
@@ -397,4 +594,14 @@ defmodule ExCoinbase.WebSocket do
   def websocket_user_url do
     ExCoinbase.Client.websocket_user_url()
   end
+
+  @doc "Returns the WebSocket URL for public market data."
+  @spec websocket_url() :: String.t()
+  def websocket_url do
+    ExCoinbase.Client.websocket_url()
+  end
+
+  @doc "Returns the list of valid market data channel names."
+  @spec valid_market_channels() :: [String.t()]
+  def valid_market_channels, do: @valid_market_channels
 end
