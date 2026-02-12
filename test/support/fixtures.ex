@@ -335,6 +335,157 @@ defmodule ExCoinbase.Fixtures do
   end
 
   # ===========================================================================
+  # Order Edit/Preview/Close Responses
+  # ===========================================================================
+
+  def sample_edit_order_response do
+    %{
+      "success" => true,
+      "errors" => [],
+      "order" => %{
+        "order_id" => "order-123",
+        "product_id" => "BTC-USD",
+        "side" => "BUY",
+        "status" => "PENDING"
+      }
+    }
+  end
+
+  def sample_edit_order_preview_response do
+    %{
+      "slippage" => "0.01",
+      "order_total" => "51.00",
+      "commission_total" => "0.30",
+      "quote_size" => "51.00",
+      "base_size" => "0.001",
+      "best_bid" => "50999.00",
+      "best_ask" => "51001.00",
+      "average_filled_price" => "51000.00"
+    }
+  end
+
+  def sample_preview_order_response do
+    %{
+      "order_total" => "100.60",
+      "commission_total" => "0.60",
+      "errs" => [],
+      "warning" => [],
+      "quote_size" => "100.00",
+      "base_size" => "0.002",
+      "best_bid" => "49999.00",
+      "best_ask" => "50001.00",
+      "is_max" => false,
+      "order_margin_total" => "0",
+      "leverage" => "1",
+      "slippage" => "0.02"
+    }
+  end
+
+  def sample_close_position_response do
+    %{
+      "success" => true,
+      "success_response" => %{
+        "order_id" => "close-order-id",
+        "product_id" => "BTC-USD",
+        "side" => "SELL",
+        "client_order_id" => "close-order-123"
+      }
+    }
+  end
+
+  # ===========================================================================
+  # Market Data WebSocket Event Fixtures
+  # ===========================================================================
+
+  def sample_level2_event do
+    %{
+      "channel" => "l2_data",
+      "client_id" => "",
+      "timestamp" => "2024-01-01T00:00:00.000000Z",
+      "sequence_num" => 1,
+      "events" => [
+        %{
+          "type" => "snapshot",
+          "product_id" => "BTC-USD",
+          "updates" => [
+            %{"side" => "bid", "price_level" => "49999.00", "new_quantity" => "1.5"},
+            %{"side" => "offer", "price_level" => "50001.00", "new_quantity" => "2.0"}
+          ]
+        }
+      ]
+    }
+  end
+
+  def sample_ticker_event do
+    %{
+      "channel" => "ticker",
+      "client_id" => "",
+      "timestamp" => "2024-01-01T00:00:00.000000Z",
+      "sequence_num" => 5,
+      "events" => [
+        %{
+          "type" => "snapshot",
+          "tickers" => [
+            %{
+              "type" => "ticker",
+              "product_id" => "BTC-USD",
+              "price" => "50000.00",
+              "volume_24_h" => "12345.67",
+              "low_24_h" => "49000.00",
+              "high_24_h" => "51000.00",
+              "low_52_w" => "30000.00",
+              "high_52_w" => "69000.00",
+              "price_percent_chg_24_h" => "2.5"
+            }
+          ]
+        }
+      ]
+    }
+  end
+
+  def sample_ticker_batch_event do
+    %{
+      "channel" => "ticker_batch",
+      "client_id" => "",
+      "timestamp" => "2024-01-01T00:00:00.000000Z",
+      "sequence_num" => 10,
+      "events" => [
+        %{
+          "type" => "snapshot",
+          "tickers" => [
+            %{"product_id" => "BTC-USD", "price" => "50000.00"},
+            %{"product_id" => "ETH-USD", "price" => "3000.00"}
+          ]
+        }
+      ]
+    }
+  end
+
+  def sample_market_trades_ws_event do
+    %{
+      "channel" => "market_trades",
+      "client_id" => "",
+      "timestamp" => "2024-01-01T00:00:00.000000Z",
+      "sequence_num" => 20,
+      "events" => [
+        %{
+          "type" => "snapshot",
+          "trades" => [
+            %{
+              "trade_id" => "trade-1",
+              "product_id" => "BTC-USD",
+              "price" => "50000.00",
+              "size" => "0.01",
+              "side" => "BUY",
+              "time" => "2024-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  end
+
+  # ===========================================================================
   # Test Client Factory
   # ===========================================================================
 

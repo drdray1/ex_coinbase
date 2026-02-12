@@ -133,6 +133,171 @@ defmodule ExCoinbase.OrdersTest do
     end
   end
 
+  describe "limit_order_ioc/5" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, _} = Orders.limit_order_ioc(client, "BTC-USD", "BUY", "0.001", "50000")
+    end
+  end
+
+  describe "limit_order_gtd/6" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, _} =
+               Orders.limit_order_gtd(
+                 client,
+                 "BTC-USD",
+                 "BUY",
+                 "0.001",
+                 "50000",
+                 "2024-12-31T23:59:59Z"
+               )
+    end
+  end
+
+  describe "limit_order_fok/5" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, _} = Orders.limit_order_fok(client, "BTC-USD", "BUY", "0.001", "50000")
+    end
+  end
+
+  describe "stop_limit_order_gtd/7" do
+    test "returns success" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, _} =
+               Orders.stop_limit_order_gtd(
+                 client,
+                 "BTC-USD",
+                 "SELL",
+                 "0.001",
+                 "49000",
+                 "48000",
+                 "2024-12-31T23:59:59Z"
+               )
+    end
+  end
+
+  describe "edit_order/3" do
+    test "returns success when editing price" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_edit_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"success" => true}} = Orders.edit_order(client, "order-123", price: "51000")
+    end
+
+    test "returns success when editing size" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_edit_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"success" => true}} = Orders.edit_order(client, "order-123", size: "0.002")
+    end
+
+    test "returns success when editing both price and size" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_edit_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, _} =
+               Orders.edit_order(client, "order-123", price: "51000", size: "0.002")
+    end
+
+    test "returns validation error when neither price nor size provided" do
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, {:validation_error, errors}} = Orders.edit_order(client, "order-123")
+      assert "at least one of price or size is required" in errors
+    end
+  end
+
+  describe "edit_order_preview/3" do
+    test "returns preview data for price edit" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_edit_order_preview_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, %{"slippage" => _}} =
+               Orders.edit_order_preview(client, "order-123", price: "51000")
+    end
+
+    test "returns validation error when neither price nor size provided" do
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:error, {:validation_error, _}} =
+               Orders.edit_order_preview(client, "order-123")
+    end
+  end
+
+  describe "preview_order/2" do
+    test "returns preview for valid order" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_preview_order_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      params = %{
+        product_id: "BTC-USD",
+        side: "BUY",
+        order_configuration: %{market_market_ioc: %{quote_size: "100"}}
+      }
+
+      assert {:ok, %{"commission_total" => _}} = Orders.preview_order(client, params)
+    end
+
+    test "returns validation error for invalid params" do
+      client = Fixtures.test_client(@stub_name)
+      assert {:error, {:validation_error, _}} = Orders.preview_order(client, %{})
+    end
+  end
+
+  describe "close_position/4" do
+    test "closes position fully" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_close_position_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+      assert {:ok, %{"success" => true}} = Orders.close_position(client, "close-123", "BTC-USD")
+    end
+
+    test "closes position partially with size" do
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, Fixtures.sample_close_position_response())
+      end)
+
+      client = Fixtures.test_client(@stub_name)
+
+      assert {:ok, %{"success" => true}} =
+               Orders.close_position(client, "close-123", "BTC-USD", size: "0.5")
+    end
+  end
+
   describe "cancel_orders/2" do
     test "returns success" do
       Req.Test.expect(@stub_name, fn conn ->

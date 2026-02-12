@@ -153,9 +153,31 @@ defmodule ExCoinbase do
   @doc "Creates a limit order with Good-Til-Canceled duration."
   defdelegate limit_order_gtc(client, product_id, side, base_size, limit_price), to: Orders
 
+  @doc "Creates a limit order with Immediate-or-Cancel duration."
+  defdelegate limit_order_ioc(client, product_id, side, base_size, limit_price), to: Orders
+
+  @doc "Creates a limit order with Good-Til-Date duration."
+  defdelegate limit_order_gtd(client, product_id, side, base_size, limit_price, end_time),
+    to: Orders
+
+  @doc "Creates a limit order with Fill-or-Kill duration."
+  defdelegate limit_order_fok(client, product_id, side, base_size, limit_price), to: Orders
+
   @doc "Creates a stop-limit order with Good-Til-Canceled duration."
   defdelegate stop_limit_order_gtc(client, product_id, side, base_size, limit_price, stop_price),
     to: Orders
+
+  @doc "Creates a stop-limit order with Good-Til-Date duration."
+  defdelegate stop_limit_order_gtd(
+                client,
+                product_id,
+                side,
+                base_size,
+                limit_price,
+                stop_price,
+                end_time
+              ),
+              to: Orders
 
   @doc """
   Creates a bracket order with entry limit, take-profit, and stop-loss (Good-Til-Canceled).
@@ -188,6 +210,18 @@ defmodule ExCoinbase do
                 end_time
               ),
               to: Orders
+
+  @doc "Edits an existing order's price and/or size."
+  defdelegate edit_order(client, order_id, opts \\ []), to: Orders
+
+  @doc "Previews an order edit without executing it."
+  defdelegate edit_order_preview(client, order_id, opts \\ []), to: Orders
+
+  @doc "Previews an order without executing it (fee/commission estimate)."
+  defdelegate preview_order(client, params), to: Orders
+
+  @doc "Closes an open position (full or partial)."
+  defdelegate close_position(client, client_order_id, product_id, opts \\ []), to: Orders
 
   @doc "Cancels one or more orders."
   defdelegate cancel_orders(client, order_ids), to: Orders
