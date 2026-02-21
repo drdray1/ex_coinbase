@@ -8,28 +8,77 @@ defmodule ExCoinbase.ClientTest do
   setup :verify_on_exit!
 
   describe "new/3" do
-    test "creates a Req.Request struct" do
-      api_key = Fixtures.sample_api_key()
-      private_key = Fixtures.sample_private_key_pem()
+    setup do
+      %{
+        api_key: Fixtures.sample_api_key(),
+        pem: Fixtures.sample_p256_private_key_pem()
+      }
+    end
 
-      client = Client.new(api_key, private_key)
+    test "creates a Req.Request struct", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem)
       assert %Req.Request{} = client
     end
 
-    test "creates client with sandbox option" do
-      api_key = Fixtures.sample_api_key()
-      private_key = Fixtures.sample_private_key_pem()
-
-      client = Client.new(api_key, private_key, sandbox: true)
+    test "creates client with sandbox option", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem, sandbox: true)
       assert %Req.Request{} = client
     end
 
-    test "creates client with test plug" do
-      api_key = Fixtures.sample_api_key()
-      private_key = Fixtures.sample_private_key_pem()
-
-      client = Client.new(api_key, private_key, plug: {Req.Test, __MODULE__})
+    test "creates client with test plug", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem, plug: {Req.Test, __MODULE__})
       assert %Req.Request{} = client
+    end
+
+    test "sets transient retry with 3 max retries", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem)
+      assert client.options[:retry] == :transient
+      assert client.options[:max_retries] == 3
+    end
+
+    test "retry_delay produces correct exponential backoff", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem)
+      retry_delay = client.options[:retry_delay]
+      assert is_function(retry_delay, 1)
+
+      # Req passes 0-indexed retry count
+      assert retry_delay.(0) == 500
+      assert retry_delay.(1) == 1000
+      assert retry_delay.(2) == 2000
+    end
+
+    test "retry_delay handles negative attempt values without crashing", %{
+      api_key: api_key,
+      pem: pem
+    } do
+      client = Client.new(api_key, pem)
+      retry_delay = client.options[:retry_delay]
+
+      # Req can pass negative values in some code paths
+      assert retry_delay.(-1) == 500
+      assert retry_delay.(-5) == 500
+    end
+
+    test "sets production base_url by default", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem)
+      assert client.options[:base_url] =~ "api.coinbase.com"
+      refute client.options[:base_url] =~ "sandbox"
+    end
+
+    test "sets sandbox base_url when sandbox: true", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem, sandbox: true)
+      assert client.options[:base_url] =~ "sandbox"
+    end
+
+    test "sets content-type header", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem)
+      assert client.headers["content-type"] == ["application/json"]
+    end
+
+    test "attaches coinbase_auth request step", %{api_key: api_key, pem: pem} do
+      client = Client.new(api_key, pem)
+      step_keys = Keyword.keys(client.request_steps)
+      assert :coinbase_auth in step_keys
     end
   end
 
