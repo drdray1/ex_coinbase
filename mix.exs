@@ -1,7 +1,7 @@
 defmodule ExCoinbase.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.1.3"
   @source_url "https://github.com/dray/ex_coinbase"
 
   def project do
@@ -39,7 +39,7 @@ defmodule ExCoinbase.MixProject do
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:jose, "~> 1.11"},
-      {:decimal, "~> 2.0"},
+      {:decimal, "~> 2.0 or ~> 3.0"},
       {:websockex, "~> 0.4"},
       {:plug, "~> 1.14", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
