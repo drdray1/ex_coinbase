@@ -9,14 +9,21 @@ defmodule ExCoinbase.Predictions do
 
   ## How contracts work
 
+  - Markets are Kalshi event contracts; product IDs are Kalshi tickers with a
+    `-KALSHI` suffix, e.g. `KXBTC15M-26AUG270830-30-KALSHI`.
   - Each contract settles at 1 USD if the event resolves in its favour, else 0,
     so prices are quoted between 0 and 1 USD.
   - There is only a YES order book. A NO order is a short position on the YES
     book — the API handles that translation when you pass
     `prediction_side: "PREDICTION_SIDE_NO"`.
-  - `base_size` is a number of contracts; `quote_size` is a USD amount.
-  - Positions show up in the portfolio breakdown under
-    `prediction_markets_positions` with `side` LONG (YES) or SHORT (NO).
+  - Market orders are fill-or-kill (`market_market_fok`), which is what the
+    Coinbase app itself sends. `base_size` is a number of contracts;
+    `quote_size` is a USD amount.
+  - Orders and fills report `product_type: "PREDICTION_MARKET"`; positions
+    show up in the portfolio breakdown under `prediction_markets_positions`
+    with `side` LONG (YES) or SHORT (NO).
+  - Prediction products are not included in the default product list; see
+    `list_markets/2` and `get_market/2`.
 
   ## Examples
 
@@ -51,6 +58,9 @@ defmodule ExCoinbase.Predictions do
   @yes "PREDICTION_SIDE_YES"
   @no "PREDICTION_SIDE_NO"
   @position_product_type "PRODUCT_TYPE_PREDICTION_MARKETS"
+  @order_product_type "PREDICTION_MARKET"
+  @product_id_suffix "-KALSHI"
+  @max_pages 50
   @prediction_metadata_keys [:est_average_filled_price, :supports_fractional_base_size]
 
   # ============================================================================
@@ -60,13 +70,15 @@ defmodule ExCoinbase.Predictions do
   @doc """
   Buys YES contracts.
 
-  `amount` is a USD `quote_size` for market orders, or a contract count
-  (`base_size`) when `:limit_price` is given.
+  `amount` is a USD `quote_size` for market (FOK) orders, or a contract
+  count (`base_size`) when `:limit_price` or `contracts: true` is given.
 
   ## Options
 
     - `:limit_price` - Place a `limit_limit_gtc` order at this price (0–1 USD);
       `amount` is then a number of contracts
+    - `:contracts` - When true, `amount` is a number of contracts (`base_size`)
+      even for market orders
     - `:client_order_id` - Idempotency key
     - `:est_average_filled_price` - `preview_order_est_average_filled_price` from a preview
     - `:supports_fractional_base_size` - Boolean, forwarded to the API
@@ -85,7 +97,7 @@ defmodule ExCoinbase.Predictions do
   Sells YES contracts.
 
   `contracts` is the number of contracts (`base_size`). Pass `:limit_price`
-  for a `limit_limit_gtc` order; otherwise a market IOC order is placed.
+  for a `limit_limit_gtc` order; otherwise a market FOK order is placed.
   Accepts the same options as `buy_yes/4`.
   """
   @spec sell_yes(client(), product_id(), String.t(), keyword()) :: response()
@@ -150,36 +162,67 @@ defmodule ExCoinbase.Predictions do
   @doc """
   Lists prediction-market products.
 
-  Calls `ExCoinbase.Products.list_products/2` with `get_all_products: true`
-  and keeps products for which `prediction_market?/1` is true. Pass
-  `:filter` (a 1-arity predicate on the product map) to override the
-  default detection, and any other `list_products` option to narrow the query.
+  Prediction products are not part of the default product catalogue, so this
+  first asks for `product_type: "PREDICTION_MARKET"`; if the API rejects that
+  filter it falls back to paging through `get_all_products: true` (following
+  `cursor`, up to #{@max_pages} pages) and keeps products for which
+  `prediction_market?/1` is true.
+
+  ## Options
+
+    - `:filter` - 1-arity predicate on the product map (default `prediction_market?/1`)
+    - `:product_type` - Override the type filter tried first
+    - any other `ExCoinbase.Products.list_products/2` option
 
   ## Examples
 
       iex> list_markets(client)
-      {:ok, [%{"product_id" => ..., "product_type" => ...}]}
+      {:ok, [%{"product_id" => "KXBTC15M-26AUG270830-30-KALSHI", ...}]}
   """
   @spec list_markets(client(), keyword()) :: {:ok, list(map())} | {:error, term()}
   def list_markets(client, opts \\ []) do
-    {filter, query_opts} = Keyword.pop(opts, :filter, &prediction_market?/1)
-    query_opts = Keyword.put_new(query_opts, :get_all_products, true)
+    {filter, opts} = Keyword.pop(opts, :filter, &prediction_market?/1)
+    {product_type, opts} = Keyword.pop(opts, :product_type, @order_product_type)
 
-    with {:ok, response} <- Products.list_products(client, query_opts) do
-      {:ok, response |> Products.extract_products() |> Enum.filter(filter)}
+    case fetch_all_pages(client, Keyword.put(opts, :product_type, product_type)) do
+      {:ok, products} when products != [] ->
+        {:ok, Enum.filter(products, filter)}
+
+      _ ->
+        with {:ok, products} <-
+               fetch_all_pages(client, Keyword.put(opts, :get_all_products, true)) do
+          {:ok, Enum.filter(products, filter)}
+        end
     end
   end
 
   @doc """
-  Heuristic used by `list_markets/2`: true when the product's `product_type`
-  or `product_venue` mentions prediction markets.
+  Fetches a single prediction-market product by ID
+  (e.g. `"KXBTC15M-26AUG270830-30-KALSHI"`).
+  """
+  @spec get_market(client(), product_id()) :: response()
+  def get_market(client, product_id), do: Products.get_product(client, product_id)
+
+  @doc """
+  True when a product map looks like a prediction market: `product_type`
+  is `PREDICTION_MARKET`/`PRODUCT_TYPE_PREDICTION_MARKETS`, `product_type` or
+  `product_venue` mentions PREDICTION, or the `product_id` ends in `-KALSHI`.
   """
   @spec prediction_market?(map()) :: boolean()
   def prediction_market?(product) when is_map(product) do
-    Enum.any?(["product_type", "product_venue"], fn key ->
-      value = product[key]
-      is_binary(value) and String.contains?(value, "PREDICTION")
-    end)
+    id = product["product_id"]
+
+    (is_binary(id) and String.ends_with?(id, @product_id_suffix)) or
+      Enum.any?(["product_type", "product_venue"], fn key ->
+        value = product[key]
+        is_binary(value) and String.contains?(value, "PREDICTION")
+      end)
+  end
+
+  @doc "True when a historical order/fill map is a prediction-market order."
+  @spec prediction_order?(map()) :: boolean()
+  def prediction_order?(order) when is_map(order) do
+    order["prediction_side"] in [@yes, @no] or order["product_type"] == @order_product_type
   end
 
   @doc """
@@ -196,10 +239,10 @@ defmodule ExCoinbase.Predictions do
   end
 
   @doc """
-  Lists historical orders that carry a prediction side.
+  Lists historical prediction-market orders.
 
   Options are passed to `ExCoinbase.Orders.list_orders/2`; the result is
-  filtered client-side on `prediction_side`.
+  filtered client-side with `prediction_order?/1`.
   """
   @spec list_orders(client(), keyword()) :: {:ok, list(map())} | {:error, term()}
   def list_orders(client, opts \\ []) do
@@ -207,7 +250,7 @@ defmodule ExCoinbase.Predictions do
       orders =
         response
         |> Orders.extract_orders()
-        |> Enum.filter(&(&1["prediction_side"] in [@yes, @no]))
+        |> Enum.filter(&prediction_order?/1)
 
       {:ok, orders}
     end
@@ -249,6 +292,10 @@ defmodule ExCoinbase.Predictions do
   @spec position_product_type() :: String.t()
   def position_product_type, do: @position_product_type
 
+  @doc "The `product_type` value prediction-market orders and fills carry."
+  @spec order_product_type() :: String.t()
+  def order_product_type, do: @order_product_type
+
   @doc "Returns valid prediction sides."
   @spec valid_sides() :: list(String.t())
   def valid_sides, do: [@yes, @no]
@@ -276,10 +323,31 @@ defmodule ExCoinbase.Predictions do
 
   @spec order_configuration(String.t(), String.t(), keyword()) :: map()
   defp order_configuration(side, amount, opts) do
+    in_contracts? = side == "SELL" or Keyword.get(opts, :contracts, false)
+
     case Keyword.get(opts, :limit_price) do
-      nil when side == "BUY" -> %{market_market_ioc: %{quote_size: amount}}
-      nil -> %{market_market_ioc: %{base_size: amount}}
+      nil when in_contracts? -> %{market_market_fok: %{base_size: amount}}
+      nil -> %{market_market_fok: %{quote_size: amount}}
       price -> %{limit_limit_gtc: %{base_size: amount, limit_price: price}}
+    end
+  end
+
+  @spec fetch_all_pages(client(), keyword()) :: {:ok, list(map())} | {:error, term()}
+  defp fetch_all_pages(client, opts), do: fetch_all_pages(client, opts, [], @max_pages)
+
+  defp fetch_all_pages(_client, _opts, acc, 0), do: {:ok, Enum.reverse(acc)}
+
+  defp fetch_all_pages(client, opts, acc, pages_left) do
+    with {:ok, response} <- Products.list_products(client, opts) do
+      acc = Enum.reverse(Products.extract_products(response), acc)
+
+      case response["pagination"] do
+        %{"has_next" => true, "next_cursor" => cursor} when is_binary(cursor) and cursor != "" ->
+          fetch_all_pages(client, Keyword.put(opts, :cursor, cursor), acc, pages_left - 1)
+
+        _ ->
+          {:ok, Enum.reverse(acc)}
+      end
     end
   end
 

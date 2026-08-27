@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.2.1] - 2026-08-27
+
+Prediction markets verified against a live account.
+
+### Changed
+
+- `ExCoinbase.Predictions` market orders now use `market_market_fok` (what
+  the Coinbase app sends for event contracts) instead of `market_market_ioc`.
+- `Predictions.list_markets/2` tries `product_type: "PREDICTION_MARKET"` first,
+  then falls back to paging `get_all_products: true` through `cursor`.
+  `prediction_market?/1` also matches the `-KALSHI` product-id suffix and the
+  `PREDICTION_MARKET` type; `list_orders/2` matches on `product_type` too.
+
+### Added
+
+- `Predictions.get_market/2`, `prediction_order?/1`, `order_product_type/0`;
+  `buy_yes/buy_no` option `contracts: true` to size in contracts.
+
 ## [0.2.0] - 2026-08-26
 
 Sync with the Coinbase Advanced Trade API as of August 2026.

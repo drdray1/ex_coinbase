@@ -361,6 +361,9 @@ defmodule ExCoinbase do
   @doc "Lists prediction-market products."
   defdelegate list_markets(client, opts \\ []), to: Predictions
 
+  @doc "Fetches a single prediction-market product."
+  defdelegate get_market(client, product_id), to: Predictions
+
   @doc "Lists prediction-market positions in a portfolio."
   defdelegate list_prediction_positions(client, portfolio_uuid),
     to: Predictions,

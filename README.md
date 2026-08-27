@@ -14,7 +14,7 @@ Add `ex_coinbase` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_coinbase, "~> 0.2.0"}
+    {:ex_coinbase, "~> 0.2.1"}
   ]
 end
 ```
@@ -128,15 +128,18 @@ taker_rate = ExCoinbase.taker_fee_rate(summary)
 
 ### Prediction Markets
 
-Event contracts trade through the normal order endpoints with a YES/NO
-`prediction_metadata`. Contracts price between 0 and 1 USD; `base_size` is a
-number of contracts, `quote_size` is USD. NO is a short on the YES book — the
-API handles that when you pass the side.
+Kalshi event contracts trade through the normal order endpoints with a YES/NO
+`prediction_metadata`. Product IDs are Kalshi tickers with a `-KALSHI` suffix
+(e.g. `KXBTC15M-26AUG270830-30-KALSHI`). Contracts price between 0 and 1 USD;
+`base_size` is a number of contracts, `quote_size` is USD; market orders are
+fill-or-kill. NO is a short on the YES book — the API handles that when you
+pass the side.
 
 ```elixir
-# Discover markets (GET /products?get_all_products=true, filtered client-side)
+# Discover markets (prediction products are not in the default catalogue)
 {:ok, markets} = ExCoinbase.list_markets(client)
 product_id = hd(markets)["product_id"]
+{:ok, market} = ExCoinbase.get_market(client, "KXBTC15M-26AUG270830-30-KALSHI")
 
 # Preview: how many YES contracts does $10 buy after slippage?
 {:ok, preview} = ExCoinbase.preview_yes(client, product_id, "10")

@@ -767,6 +767,10 @@ defmodule ExCoinbaseTest do
       assert {:ok, _} = ExCoinbase.preview_no(client, "PM", "1")
       assert ExCoinbase.extract_prediction_metadata(preview)["minimum_contracts"] == "2"
       assert {:ok, [%{"product_id" => "PM"}]} = ExCoinbase.list_markets(client)
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/products/PM"}} =
+               ExCoinbase.get_market(client, "PM")
+
       assert {:ok, [%{"cbrn" => "1"}]} = ExCoinbase.list_prediction_positions(client, "pf")
       assert {:ok, [%{"order_id" => "1"}]} = ExCoinbase.list_prediction_orders(client)
 
