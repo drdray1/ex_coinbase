@@ -38,6 +38,14 @@ defmodule ExCoinbase do
           timeout: 30_000
         ]
 
+  ## Prediction Markets
+
+      {:ok, markets} = ExCoinbase.list_markets(client)
+      {:ok, preview} = ExCoinbase.preview_yes(client, product_id, "10")
+      {:ok, resp} = ExCoinbase.buy_yes(client, product_id, "10")
+
+  See `ExCoinbase.Predictions`.
+
   ## WebSocket Streaming
 
       {:ok, pid} = ExCoinbase.WebSocket.Connection.start_link(
@@ -54,10 +62,15 @@ defmodule ExCoinbase do
   alias ExCoinbase.{
     Accounts,
     Client,
+    Convert,
     Fees,
+    Futures,
     Orders,
+    PaymentMethods,
     Portfolio,
-    Products
+    Predictions,
+    Products,
+    Public
   }
 
   # ============================================================================
@@ -82,8 +95,16 @@ defmodule ExCoinbase do
     Client.new(api_key, api_secret, opts)
   end
 
-  @doc "Verifies API credentials by making a test request."
+  @doc """
+  Creates an unauthenticated client for the public endpoints (`ExCoinbase.Public`).
+  """
+  def public(opts \\ []), do: Client.public(opts)
+
+  @doc "Verifies API credentials by calling `GET /key_permissions`."
   defdelegate verify_credentials(api_key, api_secret, sandbox \\ false), to: Client
+
+  @doc "Returns the API key's permissions (`can_view`, `can_trade`, `can_transfer`, ...)."
+  defdelegate key_permissions(client), to: Client
 
   @doc "Performs a health check on the client connection."
   defdelegate healthcheck(client), to: Client
@@ -100,6 +121,9 @@ defmodule ExCoinbase do
 
   @doc "Extracts accounts list from response."
   defdelegate extract_accounts(response), to: Accounts
+
+  @doc "Filters accounts down to prediction-market account types."
+  defdelegate prediction_accounts(accounts), to: Accounts
 
   @doc "Finds an account by currency code."
   defdelegate find_account_by_currency(accounts, currency),
@@ -155,6 +179,15 @@ defmodule ExCoinbase do
 
   @doc "Creates a limit order with Immediate-or-Cancel duration."
   defdelegate limit_order_ioc(client, product_id, side, base_size, limit_price), to: Orders
+
+  @doc "Creates a market fill-or-kill order (perpetuals)."
+  defdelegate market_order_fok(client, product_id, side, base_size), to: Orders
+
+  @doc "Creates a TWAP limit order (Good-Til-Date)."
+  defdelegate twap_order_gtd(client, product_id, side, size, limit_price, opts), to: Orders
+
+  @doc "Creates a scaled (laddered) limit order (Good-Til-Canceled)."
+  defdelegate scaled_order_gtc(client, product_id, side, size, opts), to: Orders
 
   @doc "Creates a limit order with Good-Til-Date duration."
   defdelegate limit_order_gtd(client, product_id, side, base_size, limit_price, end_time),
@@ -256,6 +289,9 @@ defmodule ExCoinbase do
   @doc "Returns valid time-in-force values."
   defdelegate valid_time_in_force(), to: Orders
 
+  @doc "Returns valid prediction-market sides."
+  defdelegate valid_prediction_sides(), to: Orders
+
   # ============================================================================
   # Portfolio
   # ============================================================================
@@ -299,6 +335,131 @@ defmodule ExCoinbase do
 
   @doc "Calculates estimated fee for an order."
   defdelegate estimate_fee(summary, order_size, is_maker), to: Fees
+
+  # ============================================================================
+  # Prediction Markets
+  # ============================================================================
+
+  @doc "Buys YES contracts (USD amount at market, or contracts with `:limit_price`)."
+  defdelegate buy_yes(client, product_id, amount, opts \\ []), to: Predictions
+
+  @doc "Buys NO contracts (USD amount at market, or contracts with `:limit_price`)."
+  defdelegate buy_no(client, product_id, amount, opts \\ []), to: Predictions
+
+  @doc "Sells YES contracts."
+  defdelegate sell_yes(client, product_id, contracts, opts \\ []), to: Predictions
+
+  @doc "Sells NO contracts."
+  defdelegate sell_no(client, product_id, contracts, opts \\ []), to: Predictions
+
+  @doc "Previews a YES order."
+  defdelegate preview_yes(client, product_id, amount, opts \\ []), to: Predictions
+
+  @doc "Previews a NO order."
+  defdelegate preview_no(client, product_id, amount, opts \\ []), to: Predictions
+
+  @doc "Lists prediction-market products."
+  defdelegate list_markets(client, opts \\ []), to: Predictions
+
+  @doc "Lists prediction-market positions in a portfolio."
+  defdelegate list_prediction_positions(client, portfolio_uuid),
+    to: Predictions,
+    as: :list_positions
+
+  @doc "Lists orders that carry a prediction side."
+  defdelegate list_prediction_orders(client, opts \\ []), to: Predictions, as: :list_orders
+
+  @doc "Extracts `prediction_markets_positions` from a portfolio breakdown."
+  defdelegate extract_prediction_positions(response), to: Predictions
+
+  @doc "Extracts `prediction_order_metadata` from an order preview."
+  defdelegate extract_prediction_metadata(response), to: Predictions
+
+  # ============================================================================
+  # Public Market Data (no API key)
+  # ============================================================================
+
+  @doc "Returns the server time."
+  defdelegate server_time(client), to: Public
+
+  @doc "Lists products via the public endpoint."
+  defdelegate public_list_products(client, opts \\ []), to: Public, as: :list_products
+
+  @doc "Gets a product via the public endpoint."
+  defdelegate public_get_product(client, product_id), to: Public, as: :get_product
+
+  @doc "Gets candles via the public endpoint."
+  defdelegate public_get_candles(client, product_id, opts), to: Public, as: :get_candles
+
+  @doc "Gets market trades via the public endpoint."
+  defdelegate public_get_market_trades(client, product_id, opts \\ []),
+    to: Public,
+    as: :get_market_trades
+
+  @doc "Gets the order book via the public endpoint."
+  defdelegate public_get_product_book(client, product_id, opts \\ []),
+    to: Public,
+    as: :get_product_book
+
+  # ============================================================================
+  # Convert
+  # ============================================================================
+
+  @doc "Creates a conversion quote (USD↔USDC, USD↔PYUSD, EUR↔EURC)."
+  defdelegate create_convert_quote(client, from_account, to_account, amount, opts \\ []),
+    to: Convert,
+    as: :create_quote
+
+  @doc "Gets a conversion trade."
+  defdelegate get_convert_trade(client, trade_id, from_account, to_account),
+    to: Convert,
+    as: :get_trade
+
+  @doc "Commits a conversion trade."
+  defdelegate commit_convert_trade(client, trade_id, from_account, to_account),
+    to: Convert,
+    as: :commit_trade
+
+  # ============================================================================
+  # Payment Methods
+  # ============================================================================
+
+  @doc "Lists payment methods."
+  defdelegate list_payment_methods(client), to: PaymentMethods, as: :list
+
+  @doc "Gets a payment method."
+  defdelegate get_payment_method(client, payment_method_id), to: PaymentMethods, as: :get
+
+  # ============================================================================
+  # US Futures (CFM)
+  # ============================================================================
+
+  @doc "Gets the futures balance summary."
+  defdelegate futures_balance_summary(client), to: Futures, as: :balance_summary
+
+  @doc "Lists futures positions."
+  defdelegate list_futures_positions(client), to: Futures, as: :list_positions
+
+  @doc "Gets a futures position."
+  defdelegate get_futures_position(client, product_id), to: Futures, as: :get_position
+
+  @doc "Schedules a futures sweep."
+  defdelegate schedule_futures_sweep(client, usd_amount), to: Futures, as: :schedule_sweep
+
+  @doc "Lists futures sweeps."
+  defdelegate list_futures_sweeps(client), to: Futures, as: :list_sweeps
+
+  @doc "Cancels the pending futures sweep."
+  defdelegate cancel_futures_sweep(client), to: Futures, as: :cancel_sweep
+
+  @doc "Gets the intraday margin setting."
+  defdelegate get_intraday_margin_setting(client), to: Futures
+
+  @doc "Sets the intraday margin setting."
+  defdelegate set_intraday_margin_setting(client, setting), to: Futures
+
+  @doc "Gets the current margin window."
+  defdelegate current_margin_window(client, opts \\ []), to: Futures
 
   # ============================================================================
   # Helpers

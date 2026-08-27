@@ -137,4 +137,24 @@ defmodule ExCoinbase.WebSocket.ClientTest do
       {:reply, ^frame, ^state} = Client.handle_cast({:send, frame}, state)
     end
   end
+
+  describe "edge paths" do
+    test "send_message returns encode_error for non-encodable payloads" do
+      assert {:error, {:encode_error, %Protocol.UndefinedError{}}} =
+               Client.send_message(self(), %{"pid" => self()})
+    end
+
+    test "handle_info ignores unknown messages" do
+      state = %State{parent_pid: self(), connected: true}
+      assert {:ok, ^state} = Client.handle_info(:whatever, state)
+    end
+
+    test "terminate notifies the parent only when connected" do
+      assert :ok = Client.terminate(:shutdown, %State{parent_pid: self(), connected: true})
+      assert_receive {:stream_disconnected, _pid, :shutdown}
+
+      assert :ok = Client.terminate(:shutdown, %State{parent_pid: self(), connected: false})
+      refute_receive {:stream_disconnected, _, _}
+    end
+  end
 end

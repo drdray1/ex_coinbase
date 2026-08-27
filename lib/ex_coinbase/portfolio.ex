@@ -14,7 +14,7 @@ defmodule ExCoinbase.Portfolio do
       {:ok, resp} = ExCoinbase.Portfolio.get_portfolio_breakdown(client, "portfolio-uuid")
   """
 
-  alias ExCoinbase.Client
+  alias ExCoinbase.{Client, Query}
 
   @type client :: Req.Request.t()
   @type response :: {:ok, map()} | {:error, term()}
@@ -40,10 +40,8 @@ defmodule ExCoinbase.Portfolio do
   """
   @spec list_portfolios(client(), keyword()) :: response()
   def list_portfolios(client, opts \\ []) do
-    query = build_query(opts, [:portfolio_type])
-
     client
-    |> Req.get(url: "/portfolios", params: query)
+    |> Req.get(url: Query.url("/portfolios", opts, [:portfolio_type]))
     |> Client.handle_response()
   end
 
@@ -257,11 +255,4 @@ defmodule ExCoinbase.Portfolio do
   defp parse_decimal(nil), do: Decimal.new("0")
   defp parse_decimal(value) when is_binary(value), do: Decimal.new(value)
   defp parse_decimal(_), do: Decimal.new("0")
-
-  @spec build_query(keyword(), list(atom())) :: keyword()
-  defp build_query(opts, allowed_keys) do
-    opts
-    |> Keyword.take(allowed_keys)
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-  end
 end

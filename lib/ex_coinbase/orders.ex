@@ -3,7 +3,9 @@ defmodule ExCoinbase.Orders do
   Coinbase Advanced Trade API - Order management.
 
   Provides functions for placing, canceling, and retrieving orders.
-  Supports market, limit, stop-limit, and bracket order types.
+  Supports market, limit (incl. SOR IOC), stop-limit, bracket, TWAP and
+  scaled order types, plus the prediction-market and equity metadata fields.
+  See `ExCoinbase.Predictions` for a YES/NO-oriented wrapper.
 
   ## Examples
 
@@ -21,7 +23,7 @@ defmodule ExCoinbase.Orders do
       )
   """
 
-  alias ExCoinbase.Client
+  alias ExCoinbase.{Client, Query}
 
   @type client :: Req.Request.t()
   @type response :: {:ok, map()} | {:error, term()}
@@ -29,9 +31,44 @@ defmodule ExCoinbase.Orders do
   @type product_id :: String.t()
 
   @valid_sides ~w(BUY SELL)
-  @valid_order_types ~w(MARKET LIMIT STOP STOP_LIMIT BRACKET)
+  @valid_order_types ~w(MARKET LIMIT STOP STOP_LIMIT BRACKET TWAP SCALED)
   @valid_time_in_force ~w(GTC GTD IOC FOK)
-  @valid_order_statuses ~w(OPEN CANCELLED EXPIRED FILLED PENDING)
+  @valid_order_statuses ~w(OPEN CANCELLED EXPIRED FILLED PENDING QUEUED CANCEL_QUEUED FAILED)
+  @valid_prediction_sides ~w(PREDICTION_SIDE_YES PREDICTION_SIDE_NO)
+  @valid_sor_preferences ~w(SOR_ENABLED SOR_DISABLED)
+  @valid_cost_basis_methods ~w(COST_BASIS_METHOD_HIFO COST_BASIS_METHOD_LIFO COST_BASIS_METHOD_FIFO COST_BASIS_METHOD_SPEC_ID)
+
+  @list_orders_keys [
+    :order_ids,
+    :product_ids,
+    :product_type,
+    :order_status,
+    :time_in_forces,
+    :order_types,
+    :order_side,
+    :start_date,
+    :end_date,
+    :order_placement_source,
+    :contract_expiry_type,
+    :asset_filters,
+    :limit,
+    :cursor,
+    :sort_by
+  ]
+
+  @list_fills_keys [
+    :order_ids,
+    :trade_ids,
+    :product_ids,
+    :start_sequence_timestamp,
+    :end_sequence_timestamp,
+    :limit,
+    :cursor,
+    :sort_by,
+    :order_types,
+    :order_side,
+    :product_types
+  ]
 
   # ============================================================================
   # Order Placement
@@ -47,6 +84,16 @@ defmodule ExCoinbase.Orders do
       - `:product_id` - Trading pair (e.g., "BTC-USD") - required
       - `:side` - "BUY" or "SELL" - required
       - `:order_configuration` - Type-specific config - required
+      - `:client_order_id` - Idempotency key (a UUID is generated when omitted)
+      - `:attached_order_configuration` - Attached TP/SL (`trigger_bracket_gtc` only)
+      - `:leverage`, `:margin_type` - Perpetuals ("CROSS" | "ISOLATED")
+      - `:preview_id` - ID returned by `preview_order/2`
+      - `:sor_preference` - "SOR_ENABLED" | "SOR_DISABLED"
+      - `:prediction_metadata` - `%{prediction_side: "PREDICTION_SIDE_YES" | "PREDICTION_SIDE_NO", ...}`
+        for prediction-market products (see `ExCoinbase.Predictions`)
+      - `:equity_order_metadata` - `%{equity_trading_session: ..., displayed_order_config: ...}`
+      - `:cost_basis_method` - Tax-lot method, e.g. "COST_BASIS_METHOD_FIFO"
+      - `:retail_portfolio_id` - Deprecated; only for legacy keys
 
   ## Order Configuration Examples
 
@@ -61,6 +108,11 @@ defmodule ExCoinbase.Orders do
   Stop-limit GTC order:
 
       %{stop_limit_stop_limit_gtc: %{base_size: "0.001", limit_price: "49000", stop_price: "48000"}}
+
+  All configuration keys accepted by the API: `market_market_ioc`, `market_market_fok`,
+  `sor_limit_ioc`, `limit_limit_gtc`, `limit_limit_gtd`, `limit_limit_fok`,
+  `twap_limit_gtd`, `stop_limit_stop_limit_gtc`, `stop_limit_stop_limit_gtd`,
+  `trigger_bracket_gtc`, `trigger_bracket_gtd`, `scaled_limit_gtc`.
   """
   @spec create_order(client(), map()) :: response()
   def create_order(client, params) do
@@ -108,6 +160,23 @@ defmodule ExCoinbase.Orders do
   end
 
   @doc """
+  Creates a market Fill-Or-Kill order (perpetual futures only) using base size.
+
+  ## Examples
+
+      iex> market_order_fok(client, "BTC-PERP-INTX", "BUY", "0.001")
+      {:ok, %{"order_id" => "..."}}
+  """
+  @spec market_order_fok(client(), product_id(), String.t(), String.t()) :: response()
+  def market_order_fok(client, product_id, side, base_size) do
+    create_order(client, %{
+      product_id: product_id,
+      side: side,
+      order_configuration: %{market_market_fok: %{base_size: base_size}}
+    })
+  end
+
+  @doc """
   Creates a limit order with Good-Til-Canceled duration.
 
   ## Examples
@@ -130,10 +199,11 @@ defmodule ExCoinbase.Orders do
   end
 
   @doc """
-  Creates a limit order with Immediate-or-Cancel duration.
+  Creates an Immediate-Or-Cancel limit order.
 
-  The order executes immediately at the limit price or better;
-  any unfilled portion is cancelled.
+  The API exposes IOC limit orders as `sor_limit_ioc` (Smart Order Routed):
+  the order executes immediately at the limit price or better and any
+  unfilled portion is cancelled.
 
   ## Examples
 
@@ -146,7 +216,7 @@ defmodule ExCoinbase.Orders do
       product_id: product_id,
       side: side,
       order_configuration: %{
-        limit_limit_ioc: %{
+        sor_limit_ioc: %{
           base_size: base_size,
           limit_price: limit_price
         }
@@ -363,6 +433,80 @@ defmodule ExCoinbase.Orders do
     })
   end
 
+  @doc """
+  Creates a TWAP (time-weighted average price) limit order, Good-Til-Date.
+
+  ## Parameters
+
+    - `size` - `%{base_size: "..."}` or `%{quote_size: "..."}`
+    - `limit_price` - Worst acceptable price for any bucket
+    - `opts` - Required: `:start_time`, `:end_time` (RFC3339), `:number_buckets`,
+      `:bucket_size`, `:bucket_duration`
+
+  ## Examples
+
+      iex> twap_order_gtd(client, "BTC-USD", "BUY", %{base_size: "1"}, "50000",
+      ...>   start_time: "2026-09-01T00:00:00Z", end_time: "2026-09-01T01:00:00Z",
+      ...>   number_buckets: "6", bucket_size: "0.1666", bucket_duration: "600s")
+      {:ok, %{"order_id" => "..."}}
+  """
+  @spec twap_order_gtd(client(), product_id(), String.t(), map(), String.t(), keyword()) ::
+          response()
+  def twap_order_gtd(client, product_id, side, size, limit_price, opts) when is_map(size) do
+    config =
+      opts
+      |> Keyword.take([:start_time, :end_time, :number_buckets, :bucket_size, :bucket_duration])
+      |> Map.new()
+      |> Map.merge(size)
+      |> Map.put(:limit_price, limit_price)
+
+    create_order(client, %{
+      product_id: product_id,
+      side: side,
+      order_configuration: %{twap_limit_gtd: config}
+    })
+  end
+
+  @doc """
+  Creates a scaled limit order (a ladder of limit orders between two prices),
+  Good-Til-Canceled.
+
+  ## Parameters
+
+    - `size` - `%{base_size: "..."}` or `%{quote_size: "..."}` (total across the ladder)
+    - `opts` - `:num_orders`, `:min_price`, `:max_price` (required);
+      `:price_distribution`, `:size_distribution`, `:size_diff`, `:size_ratio`, `:orders` (optional)
+
+  ## Examples
+
+      iex> scaled_order_gtc(client, "BTC-USD", "BUY", %{quote_size: "1000"},
+      ...>   num_orders: "5", min_price: "45000", max_price: "49000")
+      {:ok, %{"order_id" => "..."}}
+  """
+  @spec scaled_order_gtc(client(), product_id(), String.t(), map(), keyword()) :: response()
+  def scaled_order_gtc(client, product_id, side, size, opts) when is_map(size) do
+    config =
+      opts
+      |> Keyword.take([
+        :num_orders,
+        :min_price,
+        :max_price,
+        :price_distribution,
+        :size_distribution,
+        :size_diff,
+        :size_ratio,
+        :orders
+      ])
+      |> Map.new()
+      |> Map.merge(size)
+
+    create_order(client, %{
+      product_id: product_id,
+      side: side,
+      order_configuration: %{scaled_limit_gtc: config}
+    })
+  end
+
   # ============================================================================
   # Order Editing
   # ============================================================================
@@ -518,38 +662,32 @@ defmodule ExCoinbase.Orders do
   @doc """
   Lists orders with optional filtering.
 
+  List-valued options are sent as repeated query keys, as the API requires.
+
   ## Options
 
-    - `:product_id` - Filter by product
-    - `:order_status` - Filter by status (OPEN, CANCELLED, EXPIRED, FILLED, PENDING)
-    - `:limit` - Maximum orders to return
-    - `:start_date` - Start date filter
-    - `:end_date` - End date filter
-    - `:order_type` - Filter by order type
-    - `:order_side` - Filter by side (BUY, SELL)
-    - `:cursor` - Pagination cursor
+    - `:order_ids` - List of order IDs
+    - `:product_ids` - List of products (e.g. `["BTC-USD"]`)
+    - `:product_type` - SPOT, FUTURE, EQUITY, ...
+    - `:order_status` - List of statuses (OPEN, CANCELLED, EXPIRED, FILLED, PENDING, ...)
+    - `:time_in_forces` - List of time-in-force values
+    - `:order_types` - List of order types (MARKET, LIMIT, ...)
+    - `:order_side` - BUY or SELL
+    - `:start_date`, `:end_date` - RFC3339 date filters
+    - `:order_placement_source` - RETAIL_SIMPLE or RETAIL_ADVANCED
+    - `:contract_expiry_type` - EXPIRING or PERPETUAL
+    - `:asset_filters` - List of asset symbols
+    - `:limit`, `:cursor`, `:sort_by` - Pagination
 
   ## Examples
 
-      iex> list_orders(client, product_id: "BTC-USD", order_status: "OPEN")
+      iex> list_orders(client, product_ids: ["BTC-USD"], order_status: ["OPEN"])
       {:ok, %{"orders" => [...]}}
   """
   @spec list_orders(client(), keyword()) :: response()
   def list_orders(client, opts \\ []) do
-    query =
-      build_query(opts, [
-        :product_id,
-        :order_status,
-        :limit,
-        :start_date,
-        :end_date,
-        :order_type,
-        :order_side,
-        :cursor
-      ])
-
     client
-    |> Req.get(url: "/orders/historical/batch", params: query)
+    |> Req.get(url: Query.url("/orders/historical/batch", opts, @list_orders_keys))
     |> Client.handle_response()
   end
 
@@ -571,34 +709,28 @@ defmodule ExCoinbase.Orders do
   @doc """
   Lists fills (executed trades) with optional filtering.
 
+  List-valued options are sent as repeated query keys, as the API requires.
+
   ## Options
 
-    - `:order_id` - Filter by order ID
-    - `:product_id` - Filter by product
-    - `:start_sequence_timestamp` - Start time
-    - `:end_sequence_timestamp` - End time
-    - `:limit` - Maximum fills to return
-    - `:cursor` - Pagination cursor
+    - `:order_ids` - List of order IDs
+    - `:trade_ids` - List of trade IDs
+    - `:product_ids` - List of products
+    - `:start_sequence_timestamp`, `:end_sequence_timestamp` - Time filters
+    - `:order_types` - List of order types
+    - `:order_side` - BUY or SELL
+    - `:product_types` - List of product types
+    - `:limit`, `:cursor`, `:sort_by` - Pagination
 
   ## Examples
 
-      iex> list_fills(client, product_id: "BTC-USD")
+      iex> list_fills(client, product_ids: ["BTC-USD"])
       {:ok, %{"fills" => [...]}}
   """
   @spec list_fills(client(), keyword()) :: response()
   def list_fills(client, opts \\ []) do
-    query =
-      build_query(opts, [
-        :order_id,
-        :product_id,
-        :start_sequence_timestamp,
-        :end_sequence_timestamp,
-        :limit,
-        :cursor
-      ])
-
     client
-    |> Req.get(url: "/orders/historical/fills", params: query)
+    |> Req.get(url: Query.url("/orders/historical/fills", opts, @list_fills_keys))
     |> Client.handle_response()
   end
 
@@ -650,6 +782,18 @@ defmodule ExCoinbase.Orders do
   @doc "Returns valid order statuses"
   @spec valid_order_statuses() :: list(String.t())
   def valid_order_statuses, do: @valid_order_statuses
+
+  @doc "Returns valid prediction-market sides"
+  @spec valid_prediction_sides() :: list(String.t())
+  def valid_prediction_sides, do: @valid_prediction_sides
+
+  @doc "Returns valid Smart Order Routing preferences"
+  @spec valid_sor_preferences() :: list(String.t())
+  def valid_sor_preferences, do: @valid_sor_preferences
+
+  @doc "Returns valid cost basis methods"
+  @spec valid_cost_basis_methods() :: list(String.t())
+  def valid_cost_basis_methods, do: @valid_cost_basis_methods
 
   # ============================================================================
   # Extractors
@@ -712,7 +856,7 @@ defmodule ExCoinbase.Orders do
   @spec build_order_body(map()) :: map()
   defp build_order_body(params) do
     %{
-      client_order_id: generate_client_order_id(),
+      client_order_id: get_field(params, :client_order_id) || generate_client_order_id(),
       product_id: get_field(params, :product_id),
       side: get_field(params, :side),
       order_configuration: get_field(params, :order_configuration)
@@ -721,6 +865,11 @@ defmodule ExCoinbase.Orders do
     |> maybe_add_field(params, :leverage)
     |> maybe_add_field(params, :margin_type)
     |> maybe_add_field(params, :retail_portfolio_id)
+    |> maybe_add_field(params, :preview_id)
+    |> maybe_add_field(params, :sor_preference)
+    |> maybe_add_field(params, :prediction_metadata)
+    |> maybe_add_field(params, :equity_order_metadata)
+    |> maybe_add_field(params, :cost_basis_method)
   end
 
   @spec generate_client_order_id() :: String.t()
@@ -815,12 +964,5 @@ defmodule ExCoinbase.Orders do
       nil -> body
       value -> Map.put(body, field, value)
     end
-  end
-
-  @spec build_query(keyword(), list(atom())) :: keyword()
-  defp build_query(opts, allowed_keys) do
-    opts
-    |> Keyword.take(allowed_keys)
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
   end
 end

@@ -119,4 +119,17 @@ defmodule ExCoinbase.FeesTest do
       assert Fees.pricing_tier(summary) == "Advanced"
     end
   end
+
+  describe "fallbacks" do
+    test "total_fees and total_volume default to zero" do
+      assert Decimal.equal?(Fees.total_fees(%{}), Decimal.new(0))
+      assert Decimal.equal?(Fees.total_volume(%{}), Decimal.new(0))
+    end
+
+    test "fee rates default to zero for non-string values" do
+      summary = %{"fee_tier" => %{"maker_fee_rate" => 4, "taker_fee_rate" => nil}}
+      assert Decimal.equal?(Fees.maker_fee_rate(summary), Decimal.new(0))
+      assert Decimal.equal?(Fees.taker_fee_rate(summary), Decimal.new(0))
+    end
+  end
 end

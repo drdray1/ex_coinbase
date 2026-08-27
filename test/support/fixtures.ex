@@ -25,6 +25,25 @@ defmodule ExCoinbase.Fixtures do
     "not a valid PEM format"
   end
 
+  @doc "Ed25519 private key as a PKCS#8 PEM (what `openssl genpkey -algorithm ed25519` emits)."
+  def sample_ed25519_private_key_pem do
+    """
+    -----BEGIN PRIVATE KEY-----
+    MC4CAQAwBQYDK2VwBCIEICGNA4g+ujJlD7Wqk1HMuXE2T38B6SmCsLRXLTzSGufX
+    -----END PRIVATE KEY-----
+    """
+  end
+
+  @doc "Same Ed25519 key as a base64 32-byte seed (the CDP portal download format)."
+  def sample_ed25519_base64_seed do
+    "IY0DiD66MmUPtaqTUcy5cTZPfwHpKYKwtFctPNIa59c="
+  end
+
+  @doc "Same Ed25519 key as a base64 64-byte seed + public key."
+  def sample_ed25519_base64_key do
+    "IY0DiD66MmUPtaqTUcy5cTZPfwHpKYKwtFctPNIa59fb7bXF++krcfZda8d8ZlLf6I2hIYPm3zdis7OfsyApFQ=="
+  end
+
   # ===========================================================================
   # Account Responses
   # ===========================================================================

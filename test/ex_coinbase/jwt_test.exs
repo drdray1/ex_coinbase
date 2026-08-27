@@ -190,4 +190,116 @@ defmodule ExCoinbase.JWTTest do
       assert {:error, _reason} = result
     end
   end
+
+  describe "Ed25519 keys" do
+    alias ExCoinbase.Fixtures
+
+    defp decode_header(token) do
+      [header_b64 | _] = String.split(token, ".")
+      {:ok, json} = Base.url_decode64(header_b64, padding: false)
+      Jason.decode!(json)
+    end
+
+    test "parses a PKCS#8 Ed25519 PEM" do
+      assert {:ok, %JOSE.JWK{kty: {:jose_jwk_kty_okp_ed25519, _}} = jwk} =
+               JWT.parse_private_key(Fixtures.sample_ed25519_private_key_pem())
+
+      assert {:ok, "EdDSA"} = JWT.signing_alg(jwk)
+    end
+
+    test "parses a base64 32-byte seed and 64-byte seed+pub to the same key" do
+      {:ok, from_seed} = JWT.parse_private_key(Fixtures.sample_ed25519_base64_seed())
+      {:ok, from_full} = JWT.parse_private_key(Fixtures.sample_ed25519_base64_key())
+      {:ok, from_pem} = JWT.parse_private_key(Fixtures.sample_ed25519_private_key_pem())
+
+      assert JOSE.JWK.to_okp(from_seed) == JOSE.JWK.to_okp(from_full)
+      assert JOSE.JWK.to_okp(from_seed) == JOSE.JWK.to_okp(from_pem)
+    end
+
+    test "tolerates whitespace/newlines around a base64 key" do
+      key = "  " <> Fixtures.sample_ed25519_base64_seed() <> "\n"
+      assert {:ok, %JOSE.JWK{}} = JWT.parse_private_key(key)
+    end
+
+    test "rejects base64 of the wrong length" do
+      assert {:error, {:invalid_private_key, msg}} = JWT.parse_private_key(Base.encode64("short"))
+      assert msg =~ "32 or 64 bytes"
+    end
+
+    test "rejects strings that are neither PEM nor base64" do
+      assert {:error, {:invalid_private_key, msg}} = JWT.parse_private_key("not a key!!")
+      assert msg =~ "neither PEM nor valid base64"
+    end
+
+    test "signs REST tokens with EdDSA and they verify with the public key" do
+      key = Fixtures.sample_ed25519_base64_seed()
+
+      {:ok, token} =
+        JWT.generate_token(
+          @test_api_key_id,
+          key,
+          "GET",
+          "api.coinbase.com",
+          "/api/v3/brokerage/accounts"
+        )
+
+      assert decode_header(token)["alg"] == "EdDSA"
+
+      {:ok, jwk} = JWT.parse_private_key(key)
+
+      assert {true, %JOSE.JWT{fields: claims}, _} =
+               JOSE.JWT.verify(JOSE.JWK.to_public(jwk), token)
+
+      assert claims["uri"] == "GET api.coinbase.com/api/v3/brokerage/accounts"
+      assert claims["aud"] == ["cdp_service"]
+    end
+
+    test "signs WebSocket tokens with EdDSA and omits the uri claim" do
+      {:ok, token} =
+        JWT.generate_ws_jwt(@test_api_key_id, Fixtures.sample_ed25519_private_key_pem())
+
+      assert decode_header(token)["alg"] == "EdDSA"
+
+      {:ok, jwk} = JWT.parse_private_key(Fixtures.sample_ed25519_private_key_pem())
+
+      assert {true, %JOSE.JWT{fields: claims}, _} =
+               JOSE.JWT.verify(JOSE.JWK.to_public(jwk), token)
+
+      refute Map.has_key?(claims, "uri")
+    end
+
+    test "EC keys still sign with ES256" do
+      {:ok, jwk} = JWT.parse_private_key(@test_private_key)
+      assert {:ok, "ES256"} = JWT.signing_alg(jwk)
+    end
+  end
+
+  describe "unsupported keys" do
+    @rsa_pem """
+    -----BEGIN RSA PRIVATE KEY-----
+    MIIBPAIBAAJBAMPCVtPqD4dKOyhzKTx8bcG4538iOCGoVo3iHCnY1bIcVSbTBX27
+    5FZAlgpRXo0f7XnoqX3N6ZmhSY2xtJ4VGHkCAwEAAQJAK6bsYbjx2YNOCckUSu6c
+    MvSeepUQ20CEfIMNMK+vh1Wx82D2D45ueUnJh/7yT4pJBLCy9H5ghal4DVFfT6h4
+    GQIhAPDw4TuTaiPpL2ciP87vfuDztSAVkw1AogrSiu6UgOvDAiEAz/6J0KIIoiAy
+    K/emmBXtsgwKIbfOTgkDNYDLHHxJcxMCIQDTamoYPpfp/tkLZDAdQmVQukf6aTPp
+    cwc8+9XQ1xnwxQIhAJ+e8Tba0xNQ8BAL+57l3Ufxs2jS/ZGnmv3ZfIa830VfAiEA
+    prZ//zpx/HhUkgqBer4waDCeKBbf4IUAITtRjFc+pY8=
+    -----END RSA PRIVATE KEY-----
+    """
+
+    test "RSA keys are rejected as unsupported" do
+      assert {:error, :unsupported_private_key} = JWT.parse_private_key(@rsa_pem)
+      assert {:error, :unsupported_private_key} = JWT.signing_alg(%JOSE.JWK{})
+    end
+
+    test "malformed PEM bodies are rejected" do
+      pem = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----"
+      assert {:error, {:invalid_private_key, _}} = JWT.parse_private_key(pem)
+    end
+
+    test "generate_token surfaces key errors" do
+      assert {:error, :unsupported_private_key} =
+               JWT.generate_token(@test_api_key_id, @rsa_pem, "GET", "api.coinbase.com", "/x")
+    end
+  end
 end

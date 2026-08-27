@@ -4,7 +4,8 @@ defmodule ExCoinbase.WebSocket.Connection do
 
   Handles:
   - Establishing and maintaining WebSocket connections to the user endpoint
-  - JWT-authenticated subscriptions for order updates
+  - JWT-authenticated subscriptions for order updates (`user` channel)
+  - Optional `futures_balance_summary` channel subscription
   - Automatic JWT refresh before expiry (120s TTL)
   - Managing product subscriptions for the user channel
   - Broadcasting parsed events to subscribers
@@ -22,6 +23,16 @@ defmodule ExCoinbase.WebSocket.Connection do
 
       # You'll receive messages like:
       # {:coinbase_user_event, %ExCoinbase.WebSocket.UserOrderEvent{...}}
+
+  To also stream the futures balance summary, pass `channels`:
+
+      {:ok, pid} = ExCoinbase.WebSocket.Connection.start_link(
+        api_key_id: "...",
+        private_key_pem: "...",
+        channels: [:user, :futures_balance_summary]
+      )
+
+      # {:coinbase_futures_balance_event, %ExCoinbase.WebSocket.FuturesBalanceSummaryEvent{...}}
   """
 
   use GenServer
@@ -34,12 +45,14 @@ defmodule ExCoinbase.WebSocket.Connection do
   @reconnect_base_delay_ms 1_000
   @reconnect_max_delay_ms 30_000
   @max_reconnect_attempts 10
+  @valid_channels [:user, :futures_balance_summary]
 
   defmodule State do
     @moduledoc false
     defstruct [
       :api_key_id,
       :private_key_pem,
+      :channels,
       :websocket_pid,
       :subscribed_products,
       :subscribers,
@@ -55,6 +68,7 @@ defmodule ExCoinbase.WebSocket.Connection do
     @type t :: %__MODULE__{
             api_key_id: String.t(),
             private_key_pem: String.t(),
+            channels: [:user | :futures_balance_summary],
             websocket_pid: pid() | nil,
             subscribed_products: MapSet.t(),
             subscribers: MapSet.t(),
@@ -76,16 +90,28 @@ defmodule ExCoinbase.WebSocket.Connection do
   ## Options
 
     - `:api_key_id` - Required. The Coinbase API key ID
-    - `:private_key_pem` - Required. The EC private key in PEM format
+    - `:private_key_pem` - Required. The private key in PEM format
+    - `:channels` - Optional. Authenticated channels to subscribe to. Any of
+      `:user` and `:futures_balance_summary`. Defaults to `[:user]`. When
+      `:futures_balance_summary` is included the connection is established
+      immediately (it needs no product subscriptions).
     - `:name` - Optional. Process name for registration
   """
   def start_link(opts) do
     api_key_id = Keyword.fetch!(opts, :api_key_id)
     private_key_pem = Keyword.fetch!(opts, :private_key_pem)
+    channels = opts |> Keyword.get(:channels, [:user]) |> validate_channels!()
     name = Keyword.get(opts, :name)
 
     gen_opts = if name, do: [name: name], else: []
-    GenServer.start_link(__MODULE__, {api_key_id, private_key_pem}, gen_opts)
+    GenServer.start_link(__MODULE__, {api_key_id, private_key_pem, channels}, gen_opts)
+  end
+
+  defp validate_channels!(channels) when is_list(channels) do
+    case Enum.reject(channels, &(&1 in @valid_channels)) do
+      [] -> Enum.uniq(channels)
+      invalid -> raise ArgumentError, "invalid channels: #{inspect(invalid)}"
+    end
   end
 
   @doc """
@@ -109,7 +135,8 @@ defmodule ExCoinbase.WebSocket.Connection do
   @doc """
   Registers a process to receive streaming events.
 
-  Events are sent as `{:coinbase_user_event, event}` messages.
+  User events are sent as `{:coinbase_user_event, event}` messages and
+  futures balance summary events as `{:coinbase_futures_balance_event, event}`.
   """
   def add_subscriber(server, subscriber_pid) when is_pid(subscriber_pid) do
     GenServer.cast(server, {:add_subscriber, subscriber_pid})
@@ -134,7 +161,7 @@ defmodule ExCoinbase.WebSocket.Connection do
   @doc """
   Gets information about the current connection.
 
-  Returns a map with `:status`, `:products`, and `:subscriber_count`.
+  Returns a map with `:status`, `:products`, `:channels`, and `:subscriber_count`.
   """
   def get_info(server) do
     GenServer.call(server, :get_info)
@@ -155,10 +182,11 @@ defmodule ExCoinbase.WebSocket.Connection do
   # ============================================================================
 
   @impl GenServer
-  def init({api_key_id, private_key_pem}) do
+  def init({api_key_id, private_key_pem, channels}) do
     state = %State{
       api_key_id: api_key_id,
       private_key_pem: private_key_pem,
+      channels: channels,
       websocket_pid: nil,
       subscribed_products: MapSet.new(),
       subscribers: MapSet.new(),
@@ -169,7 +197,7 @@ defmodule ExCoinbase.WebSocket.Connection do
       subscribe_timer: nil
     }
 
-    {:ok, state}
+    {:ok, maybe_connect(state)}
   end
 
   @impl GenServer
@@ -208,6 +236,7 @@ defmodule ExCoinbase.WebSocket.Connection do
     info = %{
       status: state.status,
       products: MapSet.to_list(state.subscribed_products),
+      channels: state.channels,
       subscriber_count: MapSet.size(state.subscribers)
     }
 
@@ -248,7 +277,7 @@ defmodule ExCoinbase.WebSocket.Connection do
 
     if state.status == :connected and state.websocket_pid do
       send_heartbeat_subscription(state)
-      send_user_subscription(state)
+      send_authenticated_subscriptions(state)
       state = schedule_jwt_refresh(state)
 
       {:noreply, state}
@@ -265,7 +294,11 @@ defmodule ExCoinbase.WebSocket.Connection do
           "[ExCoinbase.WebSocket.Connection] User event received - broadcasting to #{MapSet.size(state.subscribers)} subscriber(s)"
         )
 
-        broadcast_event(state.subscribers, event)
+        broadcast_event(state.subscribers, {:coinbase_user_event, event})
+
+      {:ok, :futures_balance_summary, event} ->
+        Logger.debug("[ExCoinbase.WebSocket.Connection] Futures balance summary received")
+        broadcast_event(state.subscribers, {:coinbase_futures_balance_event, event})
 
       {:ok, :heartbeat, _event} ->
         Logger.debug("[ExCoinbase.WebSocket.Connection] Heartbeat received")
@@ -309,7 +342,7 @@ defmodule ExCoinbase.WebSocket.Connection do
     state = %{state | jwt_refresh_timer: nil}
 
     if state.status == :connected and state.websocket_pid do
-      send_user_subscription(state)
+      send_authenticated_subscriptions(state)
       state = schedule_jwt_refresh(state)
       {:noreply, state}
     else
@@ -361,10 +394,13 @@ defmodule ExCoinbase.WebSocket.Connection do
   defp maybe_connect(%{status: :connected} = state), do: state
   defp maybe_connect(%{status: :connecting} = state), do: state
 
-  defp maybe_connect(%{subscribed_products: products} = state) when map_size(products) == 0,
-    do: state
+  defp maybe_connect(state) do
+    if MapSet.size(state.subscribed_products) == 0 and not futures_balance_enabled?(state),
+      do: state,
+      else: do_connect(state)
+  end
 
-  defp maybe_connect(state), do: do_connect(state)
+  defp futures_balance_enabled?(state), do: :futures_balance_summary in state.channels
 
   defp do_connect(state) do
     state = %{state | status: :connecting}
@@ -395,6 +431,11 @@ defmodule ExCoinbase.WebSocket.Connection do
     end
   end
 
+  defp send_authenticated_subscriptions(state) do
+    if :user in state.channels, do: send_user_subscription(state)
+    if futures_balance_enabled?(state), do: send_futures_balance_subscription(state)
+  end
+
   defp send_user_subscription(state) do
     products = MapSet.to_list(state.subscribed_products)
 
@@ -419,6 +460,29 @@ defmodule ExCoinbase.WebSocket.Connection do
     end
   end
 
+  defp send_futures_balance_subscription(state) do
+    if state.websocket_pid do
+      Logger.info(
+        "[ExCoinbase.WebSocket.Connection] Sending futures_balance_summary channel subscription"
+      )
+
+      case WebSocket.build_authenticated_subscribe(
+             "futures_balance_summary",
+             state.api_key_id,
+             state.private_key_pem,
+             []
+           ) do
+        {:ok, subscribe_msg} ->
+          StreamClient.send_message(state.websocket_pid, subscribe_msg)
+
+        {:error, reason} ->
+          Logger.error(
+            "[ExCoinbase.WebSocket.Connection] Failed to generate JWT: #{inspect(reason)}"
+          )
+      end
+    end
+  end
+
   defp send_unsubscribe(state, products) do
     if state.websocket_pid && products != [] do
       unsubscribe_msg = WebSocket.build_unsubscribe_message("user", products)
@@ -426,9 +490,9 @@ defmodule ExCoinbase.WebSocket.Connection do
     end
   end
 
-  defp broadcast_event(subscribers, event) do
+  defp broadcast_event(subscribers, message) do
     Enum.each(subscribers, fn pid ->
-      send(pid, {:coinbase_user_event, event})
+      send(pid, message)
     end)
   end
 

@@ -15,7 +15,7 @@ defmodule ExCoinbase.Accounts do
       btc_account = ExCoinbase.Accounts.find_by_currency(accounts, "BTC")
   """
 
-  alias ExCoinbase.Client
+  alias ExCoinbase.{Client, Query}
 
   @type client :: Req.Request.t()
   @type response :: {:ok, map()} | {:error, term()}
@@ -38,10 +38,8 @@ defmodule ExCoinbase.Accounts do
   """
   @spec list_accounts(client(), keyword()) :: response()
   def list_accounts(client, opts \\ []) do
-    query = build_query(opts, [:limit, :cursor])
-
     client
-    |> Req.get(url: "/accounts", params: query)
+    |> Req.get(url: Query.url("/accounts", opts, [:limit, :cursor, :retail_portfolio_id]))
     |> Client.handle_response()
   end
 
@@ -74,6 +72,23 @@ defmodule ExCoinbase.Accounts do
   @spec extract_accounts(map()) :: list(map())
   def extract_accounts(%{"accounts" => accounts}) when is_list(accounts), do: accounts
   def extract_accounts(_), do: []
+
+  @doc """
+  Filters accounts down to prediction-market accounts
+  (`ACCOUNT_TYPE_PREDICTION_MARKETS_TRANSFER | _EQUITY | _CFM`).
+
+  ## Examples
+
+      iex> prediction_accounts(accounts)
+      [%{"type" => "ACCOUNT_TYPE_PREDICTION_MARKETS_EQUITY", ...}]
+  """
+  @spec prediction_accounts(list(map())) :: list(map())
+  def prediction_accounts(accounts) when is_list(accounts) do
+    Enum.filter(accounts, fn account ->
+      is_binary(account["type"]) and
+        String.starts_with?(account["type"], "ACCOUNT_TYPE_PREDICTION_MARKETS")
+    end)
+  end
 
   @doc """
   Extracts a single account from response.
@@ -119,12 +134,5 @@ defmodule ExCoinbase.Accounts do
       balance = get_in(account, ["available_balance", "value"]) || "0"
       Decimal.add(acc, Decimal.new(balance))
     end)
-  end
-
-  @spec build_query(keyword(), list(atom())) :: keyword()
-  defp build_query(opts, allowed_keys) do
-    opts
-    |> Keyword.take(allowed_keys)
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
   end
 end

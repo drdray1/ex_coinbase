@@ -2,8 +2,9 @@ defmodule ExCoinbase.Auth do
   @moduledoc """
   Req plugin for Coinbase CDP JWT authentication.
 
-  Automatically generates and attaches a JWT token to each request
-  using ES256 (ECDSA) signing as required by the Coinbase Advanced Trade API.
+  Automatically generates and attaches a JWT token to each request, signed
+  with EdDSA (Ed25519 keys) or ES256 (EC P-256 keys) depending on the key
+  supplied. See `ExCoinbase.JWT`.
 
   ## Usage
 

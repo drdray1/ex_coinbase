@@ -4,7 +4,7 @@ defmodule ExCoinbase.WebSocket.MarketDataConnection do
 
   Handles:
   - Establishing and maintaining WebSocket connections to the public market data endpoint
-  - Subscribing to level2, ticker, ticker_batch, and market_trades channels
+  - Subscribing to candles, status, level2, ticker, ticker_batch, and market_trades channels
   - Broadcasting parsed events to subscribers
   - Automatic reconnection with exponential backoff
 
@@ -75,7 +75,7 @@ defmodule ExCoinbase.WebSocket.MarketDataConnection do
   @doc """
   Subscribes to a market data channel for the given products.
 
-  Valid channels: "level2", "ticker", "ticker_batch", "market_trades"
+  Valid channels: "candles", "status", "level2", "ticker", "ticker_batch", "market_trades"
 
   ## Examples
 
@@ -239,7 +239,7 @@ defmodule ExCoinbase.WebSocket.MarketDataConnection do
   def handle_info({:stream_message, ws_pid, message}, %{websocket_pid: ws_pid} = state) do
     case WebSocket.parse_event(message) do
       {:ok, channel, event}
-      when channel in [:level2, :ticker, :ticker_batch, :market_trades] ->
+      when channel in [:level2, :ticker, :ticker_batch, :market_trades, :candles, :status] ->
         Logger.debug(
           "[MarketDataConnection] #{channel} event - broadcasting to #{MapSet.size(state.subscribers)} subscriber(s)"
         )

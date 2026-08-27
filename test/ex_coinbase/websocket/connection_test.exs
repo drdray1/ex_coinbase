@@ -95,13 +95,94 @@ defmodule ExCoinbase.WebSocket.ConnectionTest do
   end
 
   describe "get_info/1" do
-    test "returns status, products, and subscriber_count" do
+    test "returns status, products, channels, and subscriber_count" do
       pid = start_connection()
       info = Connection.get_info(pid)
 
       assert info.status == :disconnected
       assert info.products == []
+      assert info.channels == [:user]
       assert info.subscriber_count == 0
+    end
+  end
+
+  # ============================================================================
+  # Futures Balance Summary Channel Tests
+  # ============================================================================
+
+  describe "channels: [:user, :futures_balance_summary]" do
+    test "raises on invalid channel" do
+      assert_raise ArgumentError, fn ->
+        Connection.start_link(
+          api_key_id: @test_api_key,
+          private_key_pem: @test_pem,
+          channels: [:bogus]
+        )
+      end
+    end
+
+    test "connects immediately without product subscriptions" do
+      pid = start_connection(channels: [:user, :futures_balance_summary])
+      Process.sleep(50)
+
+      info = Connection.get_info(pid)
+      assert info.channels == [:user, :futures_balance_summary]
+      assert info.products == []
+      assert info.status in [:connecting, :connected]
+    end
+
+    test "sends futures_balance_summary subscription on connect and JWT refresh" do
+      test_pid = self()
+
+      stub(ExCoinbase.WebSocket.Client, :send_message, fn _pid, msg ->
+        send(test_pid, {:sent, msg})
+        :ok
+      end)
+
+      pid = start_connection(channels: [:futures_balance_summary])
+      Mimic.allow(ExCoinbase.WebSocket.Client, self(), pid)
+      Process.sleep(50)
+
+      state = :sys.get_state(pid)
+      send(pid, {:stream_connected, state.websocket_pid})
+
+      assert_receive {:sent, %{"channel" => "heartbeats"}}, 500
+
+      assert_receive {:sent, %{"channel" => "futures_balance_summary", "jwt" => jwt} = msg}, 500
+      assert is_binary(jwt)
+      refute Map.has_key?(msg, "product_ids")
+      refute_received {:sent, %{"channel" => "user"}}
+
+      send(pid, :refresh_jwt)
+      assert_receive {:sent, %{"channel" => "futures_balance_summary"}}, 500
+    end
+
+    test "broadcasts futures balance summary events to subscribers" do
+      pid = start_connection(channels: [:user, :futures_balance_summary])
+      Connection.add_subscriber(pid, self())
+      Process.sleep(50)
+
+      state = :sys.get_state(pid)
+      send(pid, {:stream_connected, state.websocket_pid})
+      Process.sleep(50)
+
+      msg =
+        Jason.encode!(%{
+          "channel" => "futures_balance_summary",
+          "sequence_num" => 1,
+          "events" => [
+            %{"type" => "snapshot", "fcm_balance_summary" => %{"futures_buying_power" => "10"}}
+          ]
+        })
+
+      send(pid, {:stream_message, state.websocket_pid, msg})
+
+      assert_receive {:coinbase_futures_balance_event,
+                      %ExCoinbase.WebSocket.FuturesBalanceSummaryEvent{
+                        type: "snapshot",
+                        balance_summary: %{"futures_buying_power" => "10"}
+                      }},
+                     500
     end
   end
 

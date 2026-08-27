@@ -682,4 +682,181 @@ defmodule ExCoinbaseTest do
       assert :ok = ExCoinbase.healthcheck(client)
     end
   end
+
+  # ============================================================================
+  # 0.2.0 delegates
+  # ============================================================================
+
+  describe "0.2.0 facade delegates" do
+    defp routed_client do
+      Req.Test.stub(@stub_name, fn conn ->
+        body =
+          case conn.request_path do
+            "/api/v3/brokerage/products" ->
+              %{"products" => [%{"product_id" => "PM", "product_type" => "PREDICTION_MARKETS"}]}
+
+            "/api/v3/brokerage/portfolios/pf" ->
+              %{"breakdown" => %{"prediction_markets_positions" => [%{"cbrn" => "1"}]}}
+
+            "/api/v3/brokerage/orders/historical/batch" ->
+              %{"orders" => [%{"order_id" => "1", "prediction_side" => "PREDICTION_SIDE_NO"}]}
+
+            "/api/v3/brokerage/orders/preview" ->
+              %{"prediction_order_metadata" => %{"minimum_contracts" => "2"}}
+
+            path ->
+              %{"path" => path, "method" => conn.method, "query" => conn.query_string}
+          end
+
+        Req.Test.json(conn, body)
+      end)
+
+      Fixtures.test_client(@stub_name)
+    end
+
+    defp public_client do
+      Req.Test.stub(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"path" => conn.request_path, "query" => conn.query_string})
+      end)
+
+      ExCoinbase.public(plug: {Req.Test, @stub_name}) |> Req.Request.merge_options(retry: false)
+    end
+
+    test "client and key permissions" do
+      client = routed_client()
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/key_permissions"}} =
+               ExCoinbase.key_permissions(client)
+
+      assert %Req.Request{} = ExCoinbase.public()
+    end
+
+    test "new order helpers" do
+      client = routed_client()
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/orders"}} =
+               ExCoinbase.market_order_fok(client, "BTC-PERP-INTX", "BUY", "1")
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/orders"}} =
+               ExCoinbase.twap_order_gtd(client, "BTC-USD", "BUY", %{base_size: "1"}, "1",
+                 start_time: "a",
+                 end_time: "b",
+                 number_buckets: "1",
+                 bucket_size: "1",
+                 bucket_duration: "1s"
+               )
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/orders"}} =
+               ExCoinbase.scaled_order_gtc(client, "BTC-USD", "BUY", %{quote_size: "1"},
+                 num_orders: "2",
+                 min_price: "1",
+                 max_price: "2"
+               )
+
+      assert ExCoinbase.valid_prediction_sides() == ["PREDICTION_SIDE_YES", "PREDICTION_SIDE_NO"]
+    end
+
+    test "prediction markets" do
+      client = routed_client()
+      orders = "/api/v3/brokerage/orders"
+      assert {:ok, %{"path" => ^orders}} = ExCoinbase.buy_yes(client, "PM", "1")
+      assert {:ok, %{"path" => ^orders}} = ExCoinbase.buy_no(client, "PM", "1")
+      assert {:ok, %{"path" => ^orders}} = ExCoinbase.sell_yes(client, "PM", "1")
+      assert {:ok, %{"path" => ^orders}} = ExCoinbase.sell_no(client, "PM", "1")
+      assert {:ok, preview} = ExCoinbase.preview_yes(client, "PM", "1")
+      assert {:ok, _} = ExCoinbase.preview_no(client, "PM", "1")
+      assert ExCoinbase.extract_prediction_metadata(preview)["minimum_contracts"] == "2"
+      assert {:ok, [%{"product_id" => "PM"}]} = ExCoinbase.list_markets(client)
+      assert {:ok, [%{"cbrn" => "1"}]} = ExCoinbase.list_prediction_positions(client, "pf")
+      assert {:ok, [%{"order_id" => "1"}]} = ExCoinbase.list_prediction_orders(client)
+
+      assert ExCoinbase.extract_prediction_positions(%{"prediction_markets_positions" => [1]}) ==
+               [1]
+
+      assert [%{"type" => "ACCOUNT_TYPE_PREDICTION_MARKETS_CFM"}] =
+               ExCoinbase.prediction_accounts([
+                 %{"type" => "ACCOUNT_TYPE_CRYPTO"},
+                 %{"type" => "ACCOUNT_TYPE_PREDICTION_MARKETS_CFM"}
+               ])
+    end
+
+    test "public market data" do
+      client = public_client()
+      assert {:ok, %{"path" => "/api/v3/brokerage/time"}} = ExCoinbase.server_time(client)
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/market/products"}} =
+               ExCoinbase.public_list_products(client)
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/market/products/BTC-USD"}} =
+               ExCoinbase.public_get_product(client, "BTC-USD")
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/market/products/BTC-USD/candles"}} =
+               ExCoinbase.public_get_candles(client, "BTC-USD",
+                 start: "1",
+                 end: "2",
+                 granularity: "ONE_HOUR"
+               )
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/market/products/BTC-USD/ticker"}} =
+               ExCoinbase.public_get_market_trades(client, "BTC-USD")
+
+      assert {:ok,
+              %{
+                "path" => "/api/v3/brokerage/market/product_book",
+                "query" => "product_id=BTC-USD"
+              }} =
+               ExCoinbase.public_get_product_book(client, "BTC-USD")
+    end
+
+    test "convert and payment methods" do
+      client = routed_client()
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/convert/quote", "method" => "POST"}} =
+               ExCoinbase.create_convert_quote(client, "a", "b", "1")
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/convert/trade/t1", "method" => "GET"}} =
+               ExCoinbase.get_convert_trade(client, "t1", "a", "b")
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/convert/trade/t1", "method" => "POST"}} =
+               ExCoinbase.commit_convert_trade(client, "t1", "a", "b")
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/payment_methods"}} =
+               ExCoinbase.list_payment_methods(client)
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/payment_methods/pm1"}} =
+               ExCoinbase.get_payment_method(client, "pm1")
+    end
+
+    test "US futures" do
+      client = routed_client()
+      cfm = "/api/v3/brokerage/cfm"
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/cfm/balance_summary"}} =
+               ExCoinbase.futures_balance_summary(client)
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/cfm/positions"}} =
+               ExCoinbase.list_futures_positions(client)
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/cfm/positions/BIT-27FEB26-CDE"}} =
+               ExCoinbase.get_futures_position(client, "BIT-27FEB26-CDE")
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/cfm/sweeps/schedule", "method" => "POST"}} =
+               ExCoinbase.schedule_futures_sweep(client, "10")
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/cfm/sweeps", "method" => "GET"}} =
+               ExCoinbase.list_futures_sweeps(client)
+
+      assert {:ok, %{"path" => "/api/v3/brokerage/cfm/sweeps", "method" => "DELETE"}} =
+               ExCoinbase.cancel_futures_sweep(client)
+
+      assert {:ok, %{"path" => path}} = ExCoinbase.get_intraday_margin_setting(client)
+      assert path == cfm <> "/intraday/margin_setting"
+
+      assert {:ok, %{"method" => "POST"}} =
+               ExCoinbase.set_intraday_margin_setting(client, "INTRADAY_MARGIN_SETTING_STANDARD")
+
+      assert {:ok, %{"query" => "margin_profile_type=X"}} =
+               ExCoinbase.current_margin_window(client, margin_profile_type: "X")
+    end
+  end
 end

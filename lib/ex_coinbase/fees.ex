@@ -14,7 +14,7 @@ defmodule ExCoinbase.Fees do
       estimated = ExCoinbase.Fees.estimate_fee(summary, Decimal.new("1000"), false)
   """
 
-  alias ExCoinbase.Client
+  alias ExCoinbase.{Client, Query}
 
   @type client :: Req.Request.t()
   @type response :: {:ok, map()} | {:error, term()}
@@ -38,10 +38,15 @@ defmodule ExCoinbase.Fees do
   """
   @spec get_transaction_summary(client(), keyword()) :: response()
   def get_transaction_summary(client, opts \\ []) do
-    query = build_query(opts, [:product_type, :contract_expiry_type])
-
     client
-    |> Req.get(url: "/transaction_summary", params: query)
+    |> Req.get(
+      url:
+        Query.url("/transaction_summary", opts, [
+          :product_type,
+          :contract_expiry_type,
+          :product_venue
+        ])
+    )
     |> Client.handle_response()
   end
 
@@ -151,11 +156,4 @@ defmodule ExCoinbase.Fees do
   defp parse_decimal(nil), do: Decimal.new("0")
   defp parse_decimal(value) when is_binary(value), do: Decimal.new(value)
   defp parse_decimal(_), do: Decimal.new("0")
-
-  @spec build_query(keyword(), list(atom())) :: keyword()
-  defp build_query(opts, allowed_keys) do
-    opts
-    |> Keyword.take(allowed_keys)
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-  end
 end

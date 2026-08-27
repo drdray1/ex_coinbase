@@ -502,4 +502,178 @@ defmodule ExCoinbase.OrdersTest do
       assert "SELL" in Orders.valid_sides()
     end
   end
+
+  describe "request encoding (0.2.0 API sync)" do
+    test "limit_order_ioc sends sor_limit_ioc" do
+      Req.Test.expect(@stub_name, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        params = Jason.decode!(body)
+
+        assert %{"sor_limit_ioc" => %{"base_size" => "0.1", "limit_price" => "100"}} =
+                 params["order_configuration"]
+
+        refute Map.has_key?(params["order_configuration"], "limit_limit_ioc")
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      assert {:ok, _} =
+               Orders.limit_order_ioc(
+                 Fixtures.test_client(@stub_name),
+                 "BTC-USD",
+                 "BUY",
+                 "0.1",
+                 "100"
+               )
+    end
+
+    test "market_order_fok sends market_market_fok" do
+      Req.Test.expect(@stub_name, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+        assert %{"market_market_fok" => %{"base_size" => "1"}} =
+                 Jason.decode!(body)["order_configuration"]
+
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      assert {:ok, _} =
+               Orders.market_order_fok(
+                 Fixtures.test_client(@stub_name),
+                 "BTC-PERP-INTX",
+                 "SELL",
+                 "1"
+               )
+    end
+
+    test "twap_order_gtd builds twap_limit_gtd config" do
+      Req.Test.expect(@stub_name, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        config = Jason.decode!(body)["order_configuration"]["twap_limit_gtd"]
+
+        assert config == %{
+                 "base_size" => "1",
+                 "limit_price" => "50000",
+                 "start_time" => "2026-09-01T00:00:00Z",
+                 "end_time" => "2026-09-01T01:00:00Z",
+                 "number_buckets" => "6",
+                 "bucket_size" => "0.1666",
+                 "bucket_duration" => "600s"
+               }
+
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      assert {:ok, _} =
+               Orders.twap_order_gtd(
+                 Fixtures.test_client(@stub_name),
+                 "BTC-USD",
+                 "BUY",
+                 %{base_size: "1"},
+                 "50000",
+                 start_time: "2026-09-01T00:00:00Z",
+                 end_time: "2026-09-01T01:00:00Z",
+                 number_buckets: "6",
+                 bucket_size: "0.1666",
+                 bucket_duration: "600s"
+               )
+    end
+
+    test "scaled_order_gtc builds scaled_limit_gtc config" do
+      Req.Test.expect(@stub_name, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        config = Jason.decode!(body)["order_configuration"]["scaled_limit_gtc"]
+
+        assert config == %{
+                 "quote_size" => "1000",
+                 "num_orders" => "5",
+                 "min_price" => "45000",
+                 "max_price" => "49000"
+               }
+
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      assert {:ok, _} =
+               Orders.scaled_order_gtc(
+                 Fixtures.test_client(@stub_name),
+                 "BTC-USD",
+                 "BUY",
+                 %{quote_size: "1000"},
+                 num_orders: "5",
+                 min_price: "45000",
+                 max_price: "49000"
+               )
+    end
+
+    test "create_order forwards prediction/equity/sor/cost-basis metadata and a caller client_order_id" do
+      Req.Test.expect(@stub_name, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        params = Jason.decode!(body)
+        assert params["client_order_id"] == "my-id-1"
+        assert params["prediction_metadata"] == %{"prediction_side" => "PREDICTION_SIDE_YES"}
+        assert params["sor_preference"] == "SOR_DISABLED"
+        assert params["cost_basis_method"] == "COST_BASIS_METHOD_FIFO"
+        assert params["preview_id"] == "prev-1"
+
+        assert params["equity_order_metadata"] == %{
+                 "equity_trading_session" => "EQUITY_TRADING_SESSION_NORMAL"
+               }
+
+        Req.Test.json(conn, Fixtures.sample_create_order_response())
+      end)
+
+      params = %{
+        client_order_id: "my-id-1",
+        product_id: "KXBTC-26SEP-100K",
+        side: "BUY",
+        order_configuration: %{market_market_ioc: %{quote_size: "10"}},
+        prediction_metadata: %{prediction_side: "PREDICTION_SIDE_YES"},
+        sor_preference: "SOR_DISABLED",
+        cost_basis_method: "COST_BASIS_METHOD_FIFO",
+        preview_id: "prev-1",
+        equity_order_metadata: %{equity_trading_session: "EQUITY_TRADING_SESSION_NORMAL"}
+      }
+
+      assert {:ok, _} = Orders.create_order(Fixtures.test_client(@stub_name), params)
+    end
+
+    test "list_orders encodes list filters as repeated keys" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.request_path == "/api/v3/brokerage/orders/historical/batch"
+
+        assert conn.query_string ==
+                 "product_ids=BTC-USD&product_ids=ETH-USD&order_status=OPEN&order_status=FILLED&limit=5"
+
+        Req.Test.json(conn, %{"orders" => []})
+      end)
+
+      assert {:ok, _} =
+               Orders.list_orders(Fixtures.test_client(@stub_name),
+                 product_ids: ["BTC-USD", "ETH-USD"],
+                 order_status: ["OPEN", "FILLED"],
+                 limit: 5,
+                 product_id: "IGNORED"
+               )
+    end
+
+    test "list_fills encodes order_ids/product_ids as repeated keys" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.query_string == "order_ids=o1&order_ids=o2&product_ids=BTC-USD"
+        Req.Test.json(conn, %{"fills" => []})
+      end)
+
+      assert {:ok, _} =
+               Orders.list_fills(Fixtures.test_client(@stub_name),
+                 order_ids: ["o1", "o2"],
+                 product_ids: ["BTC-USD"]
+               )
+    end
+
+    test "exposes the new enum helpers" do
+      assert "PREDICTION_SIDE_YES" in Orders.valid_prediction_sides()
+      assert "SOR_ENABLED" in Orders.valid_sor_preferences()
+      assert "COST_BASIS_METHOD_FIFO" in Orders.valid_cost_basis_methods()
+      assert "TWAP" in Orders.valid_order_types()
+    end
+  end
 end

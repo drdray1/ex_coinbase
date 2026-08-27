@@ -91,4 +91,36 @@ defmodule ExCoinbase.AuthTest do
       assert_receive {:auth_header, []}
     end
   end
+
+  describe "JWT uri claim path handling" do
+    defp jwt_uri(request, opts) do
+      Req.Test.expect(@stub_name, fn conn ->
+        ["Bearer " <> jwt] = Plug.Conn.get_req_header(conn, "authorization")
+        [_, payload | _] = String.split(jwt, ".")
+        {:ok, json} = Base.url_decode64(payload, padding: false)
+        Req.Test.json(conn, %{"uri" => Jason.decode!(json)["uri"]})
+      end)
+
+      {:ok, %{body: %{"uri" => uri}}} = Req.get(request, opts)
+      uri
+    end
+
+    test "prefixes the brokerage base path when the request has none" do
+      request =
+        Req.new(base_url: "https://api.coinbase.com", plug: {Req.Test, @stub_name})
+        |> Auth.attach(Fixtures.sample_api_key(), Fixtures.sample_p256_private_key_pem())
+
+      assert jwt_uri(request, url: "/accounts") ==
+               "GET api.coinbase.com/api/v3/brokerage/accounts"
+    end
+
+    test "falls back to / when the URL has no path" do
+      request =
+        Req.new(plug: {Req.Test, @stub_name})
+        |> Auth.attach(Fixtures.sample_api_key(), Fixtures.sample_p256_private_key_pem())
+
+      assert jwt_uri(request, url: "https://api.coinbase.com") ==
+               "GET api.coinbase.com/api/v3/brokerage/"
+    end
+  end
 end

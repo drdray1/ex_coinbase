@@ -17,13 +17,29 @@ defmodule ExCoinbase.Products do
       )
   """
 
-  alias ExCoinbase.Client
+  alias ExCoinbase.{Client, Query}
 
   @type client :: Req.Request.t()
   @type response :: {:ok, map()} | {:error, term()}
   @type product_id :: String.t()
 
   @valid_granularities ~w(ONE_MINUTE FIVE_MINUTE FIFTEEN_MINUTE THIRTY_MINUTE ONE_HOUR TWO_HOUR SIX_HOUR ONE_DAY)
+
+  @product_query_keys [
+    :limit,
+    :offset,
+    :cursor,
+    :product_type,
+    :product_ids,
+    :contract_expiry_type,
+    :expiring_contract_status,
+    :get_tradability_status,
+    :get_all_products,
+    :products_sort_order,
+    :futures_underlying_type,
+    :user_country_code,
+    :expired
+  ]
 
   @doc """
   Lists all available products (trading pairs).
@@ -32,8 +48,18 @@ defmodule ExCoinbase.Products do
 
     - `:limit` - Maximum products to return
     - `:offset` - Pagination offset
-    - `:product_type` - Filter by type (e.g., "SPOT")
+    - `:cursor` - Pagination cursor
+    - `:product_type` - Filter by type: SPOT (default), FUTURE, EQUITY, OPTION_GROUP, FUTURE_GROUP
     - `:product_ids` - List of specific product IDs
+    - `:contract_expiry_type` - EXPIRING or PERPETUAL (futures)
+    - `:expiring_contract_status` - STATUS_UNEXPIRED, STATUS_EXPIRED, STATUS_ALL
+    - `:get_tradability_status` - Include tradability status (boolean)
+    - `:get_all_products` - Return every product type, not just SPOT (boolean)
+    - `:products_sort_order` - PRODUCTS_SORT_ORDER_VOLUME_24H_DESCENDING or
+      PRODUCTS_SORT_ORDER_LIST_TIME_DESCENDING
+    - `:futures_underlying_type` - e.g. FUTURES_UNDERLYING_TYPE_SPOT
+    - `:user_country_code` - Country code filter
+    - `:expired` - Include expired products (boolean)
 
   ## Examples
 
@@ -45,10 +71,8 @@ defmodule ExCoinbase.Products do
   """
   @spec list_products(client(), keyword()) :: response()
   def list_products(client, opts \\ []) do
-    query = build_products_query(opts)
-
     client
-    |> Req.get(url: "/products", params: query)
+    |> Req.get(url: Query.url("/products", opts, @product_query_keys))
     |> Client.handle_response()
   end
 
@@ -75,6 +99,7 @@ defmodule ExCoinbase.Products do
     - `:start` - Start time (ISO8601 or Unix timestamp)
     - `:end` - End time (ISO8601 or Unix timestamp)
     - `:granularity` - Candle interval
+    - `:limit` - Optional maximum number of candles
 
   Valid granularities: `ONE_MINUTE`, `FIVE_MINUTE`, `FIFTEEN_MINUTE`,
   `THIRTY_MINUTE`, `ONE_HOUR`, `TWO_HOUR`, `SIX_HOUR`, `ONE_DAY`
@@ -92,7 +117,10 @@ defmodule ExCoinbase.Products do
   def get_candles(client, product_id, opts) do
     with {:ok, query} <- validate_candle_params(opts) do
       client
-      |> Req.get(url: "/products/#{product_id}/candles", params: query)
+      |> Req.get(
+        url:
+          Query.url("/products/#{product_id}/candles", query, [:start, :end, :granularity, :limit])
+      )
       |> Client.handle_response()
     end
   end
@@ -113,10 +141,8 @@ defmodule ExCoinbase.Products do
   """
   @spec get_market_trades(client(), product_id(), keyword()) :: response()
   def get_market_trades(client, product_id, opts \\ []) do
-    query = build_query(opts, [:limit, :start, :end])
-
     client
-    |> Req.get(url: "/products/#{product_id}/ticker", params: query)
+    |> Req.get(url: Query.url("/products/#{product_id}/ticker", opts, [:limit, :start, :end]))
     |> Client.handle_response()
   end
 
@@ -130,10 +156,8 @@ defmodule ExCoinbase.Products do
   """
   @spec get_best_bid_ask(client(), list(product_id())) :: response()
   def get_best_bid_ask(client, product_ids) when is_list(product_ids) do
-    query = [product_ids: Enum.join(product_ids, ",")]
-
     client
-    |> Req.get(url: "/best_bid_ask", params: query)
+    |> Req.get(url: Query.url("/best_bid_ask", [product_ids: product_ids], [:product_ids]))
     |> Client.handle_response()
   end
 
@@ -143,6 +167,7 @@ defmodule ExCoinbase.Products do
   ## Options
 
     - `:limit` - Number of levels (default: 50)
+    - `:aggregation_price_increment` - Aggregate levels to this price increment
 
   ## Examples
 
@@ -151,12 +176,12 @@ defmodule ExCoinbase.Products do
   """
   @spec get_product_book(client(), product_id(), keyword()) :: response()
   def get_product_book(client, product_id, opts \\ []) do
-    query =
-      [product_id: product_id]
-      |> Keyword.merge(Keyword.take(opts, [:limit]))
+    query = Keyword.put(opts, :product_id, product_id)
 
     client
-    |> Req.get(url: "/product_book", params: query)
+    |> Req.get(
+      url: Query.url("/product_book", query, [:product_id, :limit, :aggregation_price_increment])
+    )
     |> Client.handle_response()
   end
 
@@ -216,7 +241,7 @@ defmodule ExCoinbase.Products do
          {:ok, end_time} <- require_param(opts, :end, "end is required"),
          {:ok, granularity} <- require_param(opts, :granularity, "granularity is required"),
          :ok <- validate_granularity(granularity) do
-      {:ok, [start: start_time, end: end_time, granularity: granularity]}
+      {:ok, [start: start_time, end: end_time, granularity: granularity, limit: opts[:limit]]}
     end
   end
 
@@ -233,29 +258,5 @@ defmodule ExCoinbase.Products do
 
   defp validate_granularity(_) do
     {:error, "granularity must be one of: #{Enum.join(@valid_granularities, ", ")}"}
-  end
-
-  @spec build_products_query(keyword()) :: keyword()
-  defp build_products_query(opts) do
-    opts
-    |> Keyword.take([:limit, :offset, :product_type])
-    |> maybe_add_product_ids(opts)
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-  end
-
-  @spec maybe_add_product_ids(keyword(), keyword()) :: keyword()
-  defp maybe_add_product_ids(query, opts) do
-    case Keyword.get(opts, :product_ids) do
-      nil -> query
-      ids when is_list(ids) -> Keyword.put(query, :product_ids, Enum.join(ids, ","))
-      id when is_binary(id) -> Keyword.put(query, :product_ids, id)
-    end
-  end
-
-  @spec build_query(keyword(), list(atom())) :: keyword()
-  defp build_query(opts, allowed_keys) do
-    opts
-    |> Keyword.take(allowed_keys)
-    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
   end
 end

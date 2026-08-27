@@ -73,6 +73,17 @@ defmodule ExCoinbase.WebSocketTest do
       {:ok, :subscriptions, _data} = WebSocket.parse_event(json)
     end
 
+    test "parses subscriptions confirmation sent on the subscriptions channel" do
+      json =
+        Jason.encode!(%{
+          "channel" => "subscriptions",
+          "sequence_num" => 0,
+          "events" => [%{"subscriptions" => %{"heartbeats" => ["heartbeats"]}}]
+        })
+
+      assert {:ok, :subscriptions, %{"channel" => "subscriptions"}} = WebSocket.parse_event(json)
+    end
+
     test "returns error for invalid JSON" do
       assert {:error, :invalid_json} = WebSocket.parse_event("not json")
     end
@@ -323,12 +334,293 @@ defmodule ExCoinbase.WebSocketTest do
   end
 
   describe "valid_market_channels/0" do
-    test "returns the four market data channels" do
+    test "returns the market data channels" do
       channels = WebSocket.valid_market_channels()
       assert "level2" in channels
       assert "ticker" in channels
       assert "ticker_batch" in channels
       assert "market_trades" in channels
+      assert "candles" in channels
+      assert "status" in channels
+    end
+  end
+
+  describe "parse_candles_event/1" do
+    @candles_payload %{
+      "channel" => "candles",
+      "client_id" => "",
+      "timestamp" => "2023-06-09T20:19:35.39625135Z",
+      "sequence_num" => 0,
+      "events" => [
+        %{
+          "type" => "snapshot",
+          "candles" => [
+            %{
+              "start" => "1688998200",
+              "high" => "1867.72",
+              "low" => "1865.2",
+              "open" => "1867.72",
+              "close" => "1866.81",
+              "volume" => "0.20269406",
+              "product_id" => "ETH-USD"
+            }
+          ]
+        },
+        %{
+          "type" => "update",
+          "candles" => [
+            %{
+              "start" => "1688998500",
+              "high" => "1868.00",
+              "low" => "1866.00",
+              "open" => "1866.81",
+              "close" => "1867.50",
+              "volume" => "0.5",
+              "product_id" => "ETH-USD"
+            }
+          ]
+        }
+      ]
+    }
+
+    test "flattens candles across events" do
+      event = WebSocket.parse_candles_event(@candles_payload)
+
+      assert %WebSocket.CandlesEvent{} = event
+      assert event.channel == "candles"
+      assert event.sequence_num == 0
+      assert length(event.candles) == 2
+      [first, second] = event.candles
+      assert first["start"] == "1688998200"
+      assert first["product_id"] == "ETH-USD"
+      assert second["close"] == "1867.50"
+    end
+
+    test "parse_event routes candles channel" do
+      json = Jason.encode!(@candles_payload)
+      assert {:ok, :candles, %WebSocket.CandlesEvent{}} = WebSocket.parse_event(json)
+    end
+
+    test "handles missing events" do
+      event = WebSocket.parse_candles_event(%{"channel" => "candles"})
+      assert event.candles == []
+    end
+  end
+
+  describe "parse_status_event/1" do
+    @status_payload %{
+      "channel" => "status",
+      "client_id" => "",
+      "timestamp" => "2023-02-09T20:30:37.167359596Z",
+      "sequence_num" => 0,
+      "events" => [
+        %{
+          "type" => "snapshot",
+          "products" => [
+            %{
+              "product_type" => "SPOT",
+              "id" => "BTC-USD",
+              "base_currency" => "BTC",
+              "quote_currency" => "USD",
+              "base_increment" => "0.00000001",
+              "quote_increment" => "0.01",
+              "display_name" => "BTC/USD",
+              "status" => "online",
+              "status_message" => "",
+              "min_market_funds" => "1"
+            }
+          ]
+        }
+      ]
+    }
+
+    test "parses status snapshot products" do
+      event = WebSocket.parse_status_event(@status_payload)
+
+      assert %WebSocket.StatusEvent{} = event
+      assert event.channel == "status"
+      assert [product] = event.products
+      assert product["id"] == "BTC-USD"
+      assert product["status"] == "online"
+      assert product["min_market_funds"] == "1"
+    end
+
+    test "parse_event routes status channel" do
+      json = Jason.encode!(@status_payload)
+      assert {:ok, :status, %WebSocket.StatusEvent{}} = WebSocket.parse_event(json)
+    end
+  end
+
+  describe "parse_futures_balance_summary_event/1" do
+    @fbs_payload %{
+      "channel" => "futures_balance_summary",
+      "client_id" => "",
+      "timestamp" => "2023-02-09T20:30:37.167359596Z",
+      "sequence_num" => 0,
+      "events" => [
+        %{
+          "type" => "snapshot",
+          "fcm_balance_summary" => %{
+            "futures_buying_power" => "1000.00",
+            "total_usd_balance" => "1500.00",
+            "cbi_usd_balance" => "500.00",
+            "cfm_usd_balance" => "1000.00",
+            "total_open_orders_hold_amount" => "0.00",
+            "unrealized_pnl" => "12.50",
+            "daily_realized_pnl" => "3.00",
+            "initial_margin" => "100.00",
+            "available_margin" => "900.00",
+            "liquidation_threshold" => "50.00",
+            "liquidation_buffer_amount" => "850.00",
+            "liquidation_buffer_percentage" => "94",
+            "intraday_margin_window_measure" => %{
+              "margin_window_type" => "INTRADAY",
+              "margin_level" => "BASE",
+              "initial_margin" => "100.00",
+              "maintenance_margin" => "50.00",
+              "liquidation_buffer" => "850.00",
+              "total_hold" => "0.00",
+              "futures_buying_power" => "1000.00"
+            },
+            "overnight_margin_window_measure" => %{
+              "margin_window_type" => "OVERNIGHT",
+              "margin_level" => "BASE",
+              "initial_margin" => "120.00",
+              "maintenance_margin" => "60.00",
+              "liquidation_buffer" => "830.00",
+              "total_hold" => "0.00",
+              "futures_buying_power" => "980.00"
+            }
+          }
+        }
+      ]
+    }
+
+    test "parses balance summary" do
+      event = WebSocket.parse_futures_balance_summary_event(@fbs_payload)
+
+      assert %WebSocket.FuturesBalanceSummaryEvent{} = event
+      assert event.channel == "futures_balance_summary"
+      assert event.type == "snapshot"
+      assert event.balance_summary["futures_buying_power"] == "1000.00"
+      assert event.balance_summary["liquidation_buffer_percentage"] == "94"
+
+      assert event.balance_summary["overnight_margin_window_measure"]["initial_margin"] ==
+               "120.00"
+    end
+
+    test "parse_event routes futures_balance_summary channel" do
+      json = Jason.encode!(@fbs_payload)
+
+      assert {:ok, :futures_balance_summary, %WebSocket.FuturesBalanceSummaryEvent{}} =
+               WebSocket.parse_event(json)
+    end
+
+    test "handles missing events" do
+      event =
+        WebSocket.parse_futures_balance_summary_event(%{"channel" => "futures_balance_summary"})
+
+      assert event.type == nil
+      assert event.balance_summary == %{}
+    end
+  end
+
+  describe "parse_user_order_event/1 positions" do
+    test "extracts positions from events" do
+      data = %{
+        "channel" => "user",
+        "client_id" => "",
+        "timestamp" => "2024-01-01T00:00:00Z",
+        "sequence_num" => 1,
+        "events" => [
+          %{
+            "type" => "snapshot",
+            "orders" => [
+              %{"order_id" => "order-1", "product_id" => "BTC-PERP-INTX", "status" => "OPEN"}
+            ],
+            "positions" => %{
+              "perpetual_futures_positions" => [
+                %{
+                  "product_id" => "BTC-PERP-INTX",
+                  "portfolio_uuid" => "pf-1",
+                  "vwap" => "50000",
+                  "entry_vwap" => "49000",
+                  "position_side" => "LONG",
+                  "margin_type" => "CROSS",
+                  "net_size" => "0.5",
+                  "buy_order_size" => "0",
+                  "sell_order_size" => "0",
+                  "leverage" => "3",
+                  "mark_price" => "51000",
+                  "liquidation_price" => "30000",
+                  "im_notional" => "8500",
+                  "mm_notional" => "4250",
+                  "position_notional" => "25500",
+                  "unrealized_pnl" => "500",
+                  "aggregated_pnl" => "500"
+                }
+              ],
+              "expiring_futures_positions" => [
+                %{
+                  "product_id" => "BIT-29DEC23-CDE",
+                  "side" => "LONG",
+                  "number_of_contracts" => "2",
+                  "realized_pnl" => "0",
+                  "unrealized_pnl" => "10",
+                  "entry_price" => "40000"
+                }
+              ],
+              "prediction_market_positions" => []
+            }
+          }
+        ]
+      }
+
+      event = WebSocket.parse_user_order_event(data)
+
+      assert length(event.events) == 1
+      assert [perp] = event.positions["perpetual_futures_positions"]
+      assert perp["product_id"] == "BTC-PERP-INTX"
+      assert [exp] = event.positions["expiring_futures_positions"]
+      assert exp["number_of_contracts"] == "2"
+      assert event.positions["prediction_market_positions"] == []
+    end
+
+    test "defaults positions to empty lists when absent" do
+      data = %{"channel" => "user", "events" => [%{"type" => "snapshot", "orders" => []}]}
+      event = WebSocket.parse_user_order_event(data)
+
+      assert event.positions == %{
+               "perpetual_futures_positions" => [],
+               "expiring_futures_positions" => [],
+               "prediction_market_positions" => []
+             }
+    end
+  end
+
+  describe "build_authenticated_subscribe/4" do
+    @test_api_key "organizations/test-org-123/apiKeys/test-key-456"
+    @test_private_key """
+    -----BEGIN EC PRIVATE KEY-----
+    MHcCAQEEIJu/Ze6KwFX6kqjf0YTCwuFtFwcaIA6NfRc2XaioC8DdoAoGCCqGSM49
+    AwEHoUQDQgAE6ob5+ow9MXBF4R28xeIzj5djEWB9OM681bQ2IlqjV4LJAKdRyPRX
+    7cjqMZo/TspePuKrd936h3l17oeU4qlgHw==
+    -----END EC PRIVATE KEY-----
+    """
+
+    test "builds a futures_balance_summary subscribe without product_ids" do
+      assert {:ok, message} =
+               WebSocket.build_authenticated_subscribe(
+                 "futures_balance_summary",
+                 @test_api_key,
+                 @test_private_key,
+                 []
+               )
+
+      assert message["type"] == "subscribe"
+      assert message["channel"] == "futures_balance_summary"
+      refute Map.has_key?(message, "product_ids")
+      assert is_binary(message["jwt"])
     end
   end
 

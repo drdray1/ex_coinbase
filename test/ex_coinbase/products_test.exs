@@ -195,4 +195,63 @@ defmodule ExCoinbase.ProductsTest do
       assert length(btc_products) == 2
     end
   end
+
+  describe "query encoding (0.2.0 API sync)" do
+    test "get_best_bid_ask repeats product_ids" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.request_path == "/api/v3/brokerage/best_bid_ask"
+        assert conn.query_string == "product_ids=BTC-USD&product_ids=ETH-USD"
+        Req.Test.json(conn, %{"pricebooks" => []})
+      end)
+
+      assert {:ok, _} =
+               Products.get_best_bid_ask(Fixtures.test_client(@stub_name), ["BTC-USD", "ETH-USD"])
+    end
+
+    test "list_products passes the extended filter set" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.query_string ==
+                 "product_ids=BTC-USD&product_ids=ETH-USD&get_all_products=true&cursor=abc&products_sort_order=PRODUCTS_SORT_ORDER_VOLUME_24H_DESCENDING"
+
+        Req.Test.json(conn, %{"products" => []})
+      end)
+
+      assert {:ok, _} =
+               Products.list_products(Fixtures.test_client(@stub_name),
+                 product_ids: ["BTC-USD", "ETH-USD"],
+                 get_all_products: true,
+                 cursor: "abc",
+                 products_sort_order: "PRODUCTS_SORT_ORDER_VOLUME_24H_DESCENDING",
+                 bogus: 1
+               )
+    end
+
+    test "get_product_book forwards aggregation_price_increment" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.query_string == "product_id=BTC-USD&limit=10&aggregation_price_increment=0.01"
+        Req.Test.json(conn, %{"pricebook" => %{}})
+      end)
+
+      assert {:ok, _} =
+               Products.get_product_book(Fixtures.test_client(@stub_name), "BTC-USD",
+                 limit: 10,
+                 aggregation_price_increment: "0.01"
+               )
+    end
+
+    test "get_candles forwards optional limit" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.query_string == "start=1&end=2&granularity=ONE_HOUR&limit=3"
+        Req.Test.json(conn, %{"candles" => []})
+      end)
+
+      assert {:ok, _} =
+               Products.get_candles(Fixtures.test_client(@stub_name), "BTC-USD",
+                 start: "1",
+                 end: "2",
+                 granularity: "ONE_HOUR",
+                 limit: 3
+               )
+    end
+  end
 end

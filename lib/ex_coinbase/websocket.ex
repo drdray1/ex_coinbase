@@ -3,21 +3,35 @@ defmodule ExCoinbase.WebSocket do
   Coinbase Advanced Trade WebSocket Streaming API.
 
   Handles WebSocket message construction and parsing for the Coinbase
-  Advanced Trade API, which provides real-time order updates.
+  Advanced Trade API, which provides real-time market data and order updates.
 
   ## WebSocket Endpoints
 
+  - Public Market Data: `wss://advanced-trade-ws.coinbase.com`
   - User Data: `wss://advanced-trade-ws-user.coinbase.com` (JWT required)
 
   ## Channel Types
 
-  - `user` - Order and account updates (authenticated)
+  Public endpoint (`wss://advanced-trade-ws.coinbase.com`):
+
   - `heartbeats` - Connection keepalive
+  - `candles` - Per-product OHLCV candles (5-minute buckets)
+  - `status` - Product status snapshots
+  - `ticker` - Real-time price updates per trade
+  - `ticker_batch` - Batched price updates every 5 seconds
+  - `level2` - Order book snapshots and updates (server replies on `l2_data`)
+  - `market_trades` - Trade executions
+
+  User endpoint (`wss://advanced-trade-ws-user.coinbase.com`):
+
+  - `user` - Order updates and futures positions (authenticated)
+  - `futures_balance_summary` - FCM futures balance summary (authenticated)
 
   ## Authentication
 
-  The user endpoint requires a JWT token signed with ES256 (ECDSA P-256).
-  JWTs expire after 120 seconds and must be refreshed.
+  The user endpoint requires a JWT token. Coinbase CDP API keys may be either
+  Ed25519 (EdDSA) or ECDSA P-256 (ES256) keys; the JWT algorithm must match
+  the key type. JWTs expire after 120 seconds and must be refreshed.
   """
 
   alias ExCoinbase.JWT
@@ -33,14 +47,23 @@ defmodule ExCoinbase.WebSocket do
     @moduledoc """
     Represents a user order update event from the Coinbase WebSocket.
 
-    Events contain one or more order updates in the `events` list.
+    Events contain one or more order updates in the `events` list. The
+    `positions` map carries the futures/prediction-market positions the
+    user channel sends alongside orders, keyed by
+    `"perpetual_futures_positions"`, `"expiring_futures_positions"` and
+    `"prediction_market_positions"` (each a list of raw maps).
     """
     defstruct [
       :channel,
       :client_id,
       :timestamp,
       :sequence_num,
-      :events
+      :events,
+      positions: %{
+        "perpetual_futures_positions" => [],
+        "expiring_futures_positions" => [],
+        "prediction_market_positions" => []
+      }
     ]
 
     @type t :: %__MODULE__{
@@ -48,7 +71,8 @@ defmodule ExCoinbase.WebSocket do
             client_id: String.t(),
             timestamp: String.t(),
             sequence_num: integer(),
-            events: [map()]
+            events: [map()],
+            positions: %{String.t() => [map()]}
           }
   end
 
@@ -216,7 +240,88 @@ defmodule ExCoinbase.WebSocket do
           }
   end
 
-  @valid_market_channels ~w(level2 ticker ticker_batch market_trades)
+  defmodule CandlesEvent do
+    @moduledoc """
+    Represents a candles event from the Coinbase WebSocket.
+
+    Each candle map has the keys `start`, `high`, `low`, `open`, `close`,
+    `volume` and `product_id`.
+    """
+    defstruct [
+      :channel,
+      :client_id,
+      :timestamp,
+      :sequence_num,
+      :candles
+    ]
+
+    @type t :: %__MODULE__{
+            channel: String.t(),
+            client_id: String.t(),
+            timestamp: String.t(),
+            sequence_num: integer(),
+            candles: [map()]
+          }
+  end
+
+  defmodule StatusEvent do
+    @moduledoc """
+    Represents a status event from the Coinbase WebSocket.
+
+    Each product map has the keys `product_type`, `id`, `base_currency`,
+    `quote_currency`, `base_increment`, `quote_increment`, `display_name`,
+    `status`, `status_message` and `min_market_funds`.
+    """
+    defstruct [
+      :channel,
+      :client_id,
+      :timestamp,
+      :sequence_num,
+      :products
+    ]
+
+    @type t :: %__MODULE__{
+            channel: String.t(),
+            client_id: String.t(),
+            timestamp: String.t(),
+            sequence_num: integer(),
+            products: [map()]
+          }
+  end
+
+  defmodule FuturesBalanceSummaryEvent do
+    @moduledoc """
+    Represents a futures_balance_summary event from the Coinbase user WebSocket.
+
+    `balance_summary` is the raw `fcm_balance_summary` map with keys such as
+    `futures_buying_power`, `total_usd_balance`, `cbi_usd_balance`,
+    `cfm_usd_balance`, `total_open_orders_hold_amount`, `unrealized_pnl`,
+    `daily_realized_pnl`, `initial_margin`, `available_margin`,
+    `liquidation_threshold`, `liquidation_buffer_amount`,
+    `liquidation_buffer_percentage`, `intraday_margin_window_measure` and
+    `overnight_margin_window_measure`.
+    """
+    defstruct [
+      :channel,
+      :client_id,
+      :timestamp,
+      :sequence_num,
+      :type,
+      :balance_summary
+    ]
+
+    @type t :: %__MODULE__{
+            channel: String.t(),
+            client_id: String.t(),
+            timestamp: String.t(),
+            sequence_num: integer(),
+            type: String.t() | nil,
+            balance_summary: map()
+          }
+  end
+
+  @valid_market_channels ~w(level2 ticker ticker_batch market_trades candles status)
+  @position_keys ~w(perpetual_futures_positions expiring_futures_positions prediction_market_positions)
 
   # ============================================================================
   # Message Building
@@ -288,17 +393,35 @@ defmodule ExCoinbase.WebSocket do
   @doc """
   Generates a JWT and builds a subscribe message for the user channel.
 
+  Equivalent to `build_authenticated_subscribe("user", api_key_id, private_key_pem, product_ids)`.
+
   ## Parameters
 
     - `api_key_id` - The API Key ID
-    - `private_key_pem` - The EC Private Key in PEM format
+    - `private_key_pem` - The private key in PEM format
     - `product_ids` - List of product IDs to subscribe to
   """
   @spec build_authenticated_subscribe(String.t(), String.t(), [String.t()]) ::
           {:ok, map()} | {:error, term()}
   def build_authenticated_subscribe(api_key_id, private_key_pem, product_ids) do
+    build_authenticated_subscribe("user", api_key_id, private_key_pem, product_ids)
+  end
+
+  @doc """
+  Generates a JWT and builds a subscribe message for an authenticated channel.
+
+  ## Parameters
+
+    - `channel` - The authenticated channel ("user" or "futures_balance_summary")
+    - `api_key_id` - The API Key ID
+    - `private_key_pem` - The private key in PEM format
+    - `product_ids` - List of product IDs to subscribe to (may be empty)
+  """
+  @spec build_authenticated_subscribe(String.t(), String.t(), String.t(), [String.t()]) ::
+          {:ok, map()} | {:error, term()}
+  def build_authenticated_subscribe(channel, api_key_id, private_key_pem, product_ids) do
     with {:ok, jwt} <- JWT.generate_ws_jwt(api_key_id, private_key_pem) do
-      {:ok, build_subscribe_message("user", product_ids, jwt)}
+      {:ok, build_subscribe_message(channel, product_ids, jwt)}
     end
   end
 
@@ -357,6 +480,10 @@ defmodule ExCoinbase.WebSocket do
     {:ok, :subscriptions, data}
   end
 
+  def parse_event_from_map(%{"channel" => "subscriptions"} = data) do
+    {:ok, :subscriptions, data}
+  end
+
   def parse_event_from_map(%{"channel" => "l2_data"} = data) do
     {:ok, :level2, parse_level2_event(data)}
   end
@@ -371,6 +498,18 @@ defmodule ExCoinbase.WebSocket do
 
   def parse_event_from_map(%{"channel" => "market_trades"} = data) do
     {:ok, :market_trades, parse_market_trades_event(data)}
+  end
+
+  def parse_event_from_map(%{"channel" => "candles"} = data) do
+    {:ok, :candles, parse_candles_event(data)}
+  end
+
+  def parse_event_from_map(%{"channel" => "status"} = data) do
+    {:ok, :status, parse_status_event(data)}
+  end
+
+  def parse_event_from_map(%{"channel" => "futures_balance_summary"} = data) do
+    {:ok, :futures_balance_summary, parse_futures_balance_summary_event(data)}
   end
 
   def parse_event_from_map(%{"channel" => channel}) do
@@ -391,8 +530,19 @@ defmodule ExCoinbase.WebSocket do
       client_id: data["client_id"],
       timestamp: data["timestamp"],
       sequence_num: data["sequence_num"],
-      events: parse_order_updates(data["events"] || [])
+      events: parse_order_updates(data["events"] || []),
+      positions: parse_positions(data["events"] || [])
     }
+  end
+
+  defp parse_positions(events) do
+    positions = Enum.find_value(events, %{}, fn event -> event["positions"] end)
+    positions = if is_map(positions), do: positions, else: %{}
+
+    Map.new(@position_keys, fn key ->
+      value = positions[key]
+      {key, if(is_list(value), do: value, else: [])}
+    end)
   end
 
   @doc """
@@ -547,6 +697,61 @@ defmodule ExCoinbase.WebSocket do
       timestamp: data["timestamp"],
       sequence_num: data["sequence_num"],
       trades: trades
+    }
+  end
+
+  @doc """
+  Parses a candles event from a decoded JSON map.
+  """
+  @spec parse_candles_event(map()) :: CandlesEvent.t()
+  def parse_candles_event(data) when is_map(data) do
+    candles =
+      Enum.flat_map(data["events"] || [], fn event ->
+        event["candles"] || []
+      end)
+
+    %CandlesEvent{
+      channel: data["channel"],
+      client_id: data["client_id"],
+      timestamp: data["timestamp"],
+      sequence_num: data["sequence_num"],
+      candles: candles
+    }
+  end
+
+  @doc """
+  Parses a status event from a decoded JSON map.
+  """
+  @spec parse_status_event(map()) :: StatusEvent.t()
+  def parse_status_event(data) when is_map(data) do
+    products =
+      Enum.flat_map(data["events"] || [], fn event ->
+        event["products"] || []
+      end)
+
+    %StatusEvent{
+      channel: data["channel"],
+      client_id: data["client_id"],
+      timestamp: data["timestamp"],
+      sequence_num: data["sequence_num"],
+      products: products
+    }
+  end
+
+  @doc """
+  Parses a futures_balance_summary event from a decoded JSON map.
+  """
+  @spec parse_futures_balance_summary_event(map()) :: FuturesBalanceSummaryEvent.t()
+  def parse_futures_balance_summary_event(data) when is_map(data) do
+    event_data = List.first(data["events"] || []) || %{}
+
+    %FuturesBalanceSummaryEvent{
+      channel: data["channel"],
+      client_id: data["client_id"],
+      timestamp: data["timestamp"],
+      sequence_num: data["sequence_num"],
+      type: event_data["type"],
+      balance_summary: event_data["fcm_balance_summary"] || %{}
     }
   end
 

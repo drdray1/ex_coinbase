@@ -107,6 +107,21 @@ defmodule ExCoinbase.WebSocket.MarketDataConnectionTest do
       assert "ETH-USD" in info.channels["ticker"]
     end
 
+    test "accepts candles and status as valid channels" do
+      assert "candles" in ExCoinbase.WebSocket.valid_market_channels()
+      assert "status" in ExCoinbase.WebSocket.valid_market_channels()
+
+      pid = start_connection()
+      MarketDataConnection.subscribe(pid, "candles", ["ETH-USD"])
+      MarketDataConnection.subscribe(pid, "status", ["BTC-USD"])
+
+      Process.sleep(50)
+      info = MarketDataConnection.get_info(pid)
+      assert info.channels["candles"] == ["ETH-USD"]
+      assert info.channels["status"] == ["BTC-USD"]
+      assert info.status in [:connecting, :connected]
+    end
+
     test "supports multiple channels" do
       pid = start_connection()
       MarketDataConnection.subscribe(pid, "ticker", ["BTC-USD"])
@@ -213,6 +228,77 @@ defmodule ExCoinbase.WebSocket.MarketDataConnectionTest do
                       %ExCoinbase.WebSocket.TickerEvent{
                         channel: "ticker",
                         tickers: [%{"product_id" => "BTC-USD", "price" => "50000"}]
+                      }},
+                     500
+    end
+
+    test "broadcasts candles events to subscribers" do
+      pid = start_connection()
+      MarketDataConnection.add_subscriber(pid, self())
+      Process.sleep(50)
+
+      fake_ws_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      :sys.replace_state(pid, fn state ->
+        %{
+          state
+          | websocket_pid: fake_ws_pid,
+            status: :connected,
+            channel_subscriptions: %{"candles" => MapSet.new(["ETH-USD"])}
+        }
+      end)
+
+      candle = %{
+        "start" => "1688998200",
+        "high" => "1867.72",
+        "low" => "1865.2",
+        "open" => "1867.72",
+        "close" => "1866.81",
+        "volume" => "0.20269406",
+        "product_id" => "ETH-USD"
+      }
+
+      msg =
+        Jason.encode!(%{
+          "channel" => "candles",
+          "client_id" => "",
+          "timestamp" => "2023-06-09T20:19:35.39625135Z",
+          "sequence_num" => 0,
+          "events" => [%{"type" => "snapshot", "candles" => [candle]}]
+        })
+
+      send(pid, {:stream_message, fake_ws_pid, msg})
+
+      assert_receive {:coinbase_market_event, :candles,
+                      %ExCoinbase.WebSocket.CandlesEvent{channel: "candles", candles: [^candle]}},
+                     500
+    end
+
+    test "broadcasts status events to subscribers" do
+      pid = start_connection()
+      MarketDataConnection.add_subscriber(pid, self())
+      Process.sleep(50)
+
+      fake_ws_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      :sys.replace_state(pid, fn state ->
+        %{state | websocket_pid: fake_ws_pid, status: :connected}
+      end)
+
+      msg =
+        Jason.encode!(%{
+          "channel" => "status",
+          "sequence_num" => 0,
+          "events" => [
+            %{"type" => "snapshot", "products" => [%{"id" => "BTC-USD", "status" => "online"}]}
+          ]
+        })
+
+      send(pid, {:stream_message, fake_ws_pid, msg})
+
+      assert_receive {:coinbase_market_event, :status,
+                      %ExCoinbase.WebSocket.StatusEvent{
+                        products: [%{"id" => "BTC-USD", "status" => "online"}]
                       }},
                      500
     end

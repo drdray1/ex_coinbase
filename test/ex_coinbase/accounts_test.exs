@@ -165,4 +165,17 @@ defmodule ExCoinbase.AccountsTest do
       assert Decimal.equal?(total, Decimal.new("0"))
     end
   end
+
+  describe "prediction_accounts/1" do
+    test "keeps only prediction-market account types" do
+      accounts = [
+        %{"uuid" => "1", "type" => "ACCOUNT_TYPE_CRYPTO"},
+        %{"uuid" => "2", "type" => "ACCOUNT_TYPE_PREDICTION_MARKETS_EQUITY"},
+        %{"uuid" => "3", "type" => "ACCOUNT_TYPE_PREDICTION_MARKETS_CFM"},
+        %{"uuid" => "4"}
+      ]
+
+      assert ["2", "3"] = Enum.map(Accounts.prediction_accounts(accounts), & &1["uuid"])
+    end
+  end
 end

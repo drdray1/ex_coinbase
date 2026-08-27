@@ -2,8 +2,8 @@ defmodule ExCoinbase.Client do
   @moduledoc """
   HTTP client for Coinbase Advanced Trade API.
 
-  Handles JWT/ECDSA (ES256) authentication and request/response formatting.
-  All requests are signed using the API key and EC private key.
+  Handles CDP JWT authentication (Ed25519/EdDSA or ECDSA/ES256) and
+  request/response formatting. Every request is signed with a fresh JWT.
 
   ## API Key Format
 
@@ -11,7 +11,11 @@ defmodule ExCoinbase.Client do
 
   ## Private Key Format
 
-  The private key should be a PEM-formatted EC private key:
+  Either the base64 Ed25519 secret shown in the CDP portal (current default):
+
+      "IY0DiD66MmUPtaqTUcy5cTZPfwHpKYKwtFctPNIa59c="
+
+  or a PEM-encoded key (Ed25519 PKCS#8 or legacy EC P-256):
 
       -----BEGIN EC PRIVATE KEY-----
       ...
@@ -19,20 +23,24 @@ defmodule ExCoinbase.Client do
 
   ## Usage
 
-      client = ExCoinbase.Client.new("organizations/abc/apiKeys/123", pem_key)
+      client = ExCoinbase.Client.new("organizations/abc/apiKeys/123", private_key)
       {:ok, accounts} = ExCoinbase.Accounts.list_accounts(client)
+
+      # Unauthenticated client for the public market-data endpoints
+      public = ExCoinbase.Client.public()
+      {:ok, time} = ExCoinbase.Public.server_time(public)
   """
 
   @type client :: Req.Request.t()
   @type response :: {:ok, map()} | {:error, term()}
 
   @doc """
-  Creates a new Coinbase API client with JWT/ECDSA authentication.
+  Creates a new Coinbase API client with CDP JWT authentication.
 
   ## Parameters
 
     - `api_key` - Coinbase API key (format: `organizations/{org_id}/apiKeys/{key_id}`)
-    - `private_key_pem` - EC private key in PEM format
+    - `private_key_pem` - Ed25519 key (base64 or PEM) or EC P-256 PEM key
 
   ## Options
 
@@ -52,20 +60,38 @@ defmodule ExCoinbase.Client do
   @spec new(String.t(), String.t(), keyword()) :: client()
   def new(api_key, private_key_pem, opts \\ []) do
     sandbox = Keyword.get(opts, :sandbox, false)
+
+    opts
+    |> public()
+    |> ExCoinbase.Auth.attach(api_key, private_key_pem, sandbox: sandbox)
+  end
+
+  @doc """
+  Creates an unauthenticated client for the public endpoints
+  (`ExCoinbase.Public`: `/time` and `/market/*`).
+
+  Accepts the same `:sandbox` and `:plug` options as `new/3`.
+
+  ## Examples
+
+      client = ExCoinbase.Client.public()
+      {:ok, %{"products" => _}} = ExCoinbase.Public.list_products(client)
+  """
+  @spec public(keyword()) :: client()
+  def public(opts \\ []) do
+    sandbox = Keyword.get(opts, :sandbox, false)
     plug = Keyword.get(opts, :plug)
 
-    req_opts =
-      [
-        base_url: base_url(sandbox),
-        headers: [{"content-type", "application/json"}],
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 500 * Integer.pow(2, max(0, attempt)) end
-      ]
-      |> maybe_add_plug(plug)
-
-    Req.new(req_opts)
-    |> ExCoinbase.Auth.attach(api_key, private_key_pem, sandbox: sandbox)
+    [
+      base_url: base_url(sandbox),
+      headers: [{"content-type", "application/json"}],
+      receive_timeout: timeout(),
+      retry: :transient,
+      max_retries: 3,
+      retry_delay: fn attempt -> 500 * Integer.pow(2, max(0, attempt)) end
+    ]
+    |> maybe_add_plug(plug)
+    |> Req.new()
   end
 
   @doc """
@@ -110,7 +136,7 @@ defmodule ExCoinbase.Client do
   end
 
   @doc """
-  Validates that a private key is in the correct PEM format.
+  Validates that a private key can be parsed (Ed25519 base64/PEM or EC PEM).
 
   ## Returns
 
@@ -126,11 +152,28 @@ defmodule ExCoinbase.Client do
   end
 
   @doc """
-  Verifies credentials by testing the API connection.
+  Returns the permissions of the API key behind `client`
+  (`GET /key_permissions`): `can_view`, `can_trade`, `can_transfer`,
+  `portfolio_uuid`, `portfolio_type`.
+
+  ## Examples
+
+      iex> key_permissions(client)
+      {:ok, %{"can_view" => true, "can_trade" => true, "can_transfer" => false, ...}}
+  """
+  @spec key_permissions(client()) :: response()
+  def key_permissions(client) do
+    client
+    |> Req.get(url: "/key_permissions")
+    |> handle_response()
+  end
+
+  @doc """
+  Verifies credentials by calling `GET /key_permissions`.
 
   ## Returns
 
-    - `{:ok, accounts}` - On successful authentication
+    - `{:ok, permissions}` - On successful authentication
     - `{:error, reason}` - On failure
   """
   @spec verify_credentials(String.t(), String.t(), boolean()) :: response()
@@ -141,7 +184,7 @@ defmodule ExCoinbase.Client do
       {:ok, :valid} ->
         client = new(api_key, private_key_pem, sandbox: sandbox)
 
-        case Req.get(client, url: "/accounts") do
+        case Req.get(client, url: "/key_permissions") do
           {:ok, %Req.Response{status: 200, body: body}} ->
             {:ok, body}
 
@@ -211,7 +254,7 @@ defmodule ExCoinbase.Client do
   """
   @spec healthcheck(client()) :: :ok | {:error, term()}
   def healthcheck(client) do
-    case Req.get(client, url: "/accounts") do
+    case Req.get(client, url: "/key_permissions") do
       {:ok, %Req.Response{status: 200}} ->
         :ok
 

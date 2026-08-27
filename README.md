@@ -14,27 +14,36 @@ Add `ex_coinbase` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_coinbase, "~> 0.1.0"}
+    {:ex_coinbase, "~> 0.2.0"}
   ]
 end
 ```
 
 ## Authentication
 
-ExCoinbase uses Coinbase CDP API Keys (ES256/ECDSA P-256). Create your API key at [Coinbase CDP Portal](https://portal.cdp.coinbase.com/).
+ExCoinbase uses Coinbase CDP Secret API Keys. Create one at the [Coinbase CDP Portal](https://portal.cdp.coinbase.com/).
 
 You'll need:
 - **API Key ID** - looks like `organizations/{org_id}/apiKeys/{key_id}`
-- **EC Private Key** - PEM-encoded ECDSA P-256 key
+- **Private Key** - either
+  - the **Ed25519** secret the portal shows for new keys (a base64 string such as
+    `"IY0DiD66…59c="`; signed with `EdDSA`), or
+  - a PEM-encoded key — Ed25519 PKCS#8 (`-----BEGIN PRIVATE KEY-----`) or the
+    legacy ECDSA P-256 (`-----BEGIN EC PRIVATE KEY-----`; signed with `ES256`).
+
+The signing algorithm is chosen automatically from the key.
 
 ## Quick Start
 
 ```elixir
-# Create a client
+# Create a client (base64 Ed25519 secret or PEM both work)
 client = ExCoinbase.new(
   "organizations/abc/apiKeys/123",
-  File.read!("coinbase_private_key.pem")
+  System.fetch_env!("COINBASE_API_SECRET")
 )
+
+# Check what the key can do
+{:ok, %{"can_trade" => true}} = ExCoinbase.key_permissions(client)
 
 # List accounts
 {:ok, response} = ExCoinbase.list_accounts(client)
@@ -117,6 +126,60 @@ taker_rate = ExCoinbase.taker_fee_rate(summary)
 {:ok, fills} = ExCoinbase.list_fills(client, product_id: "BTC-USD")
 ```
 
+### Prediction Markets
+
+Event contracts trade through the normal order endpoints with a YES/NO
+`prediction_metadata`. Contracts price between 0 and 1 USD; `base_size` is a
+number of contracts, `quote_size` is USD. NO is a short on the YES book — the
+API handles that when you pass the side.
+
+```elixir
+# Discover markets (GET /products?get_all_products=true, filtered client-side)
+{:ok, markets} = ExCoinbase.list_markets(client)
+product_id = hd(markets)["product_id"]
+
+# Preview: how many YES contracts does $10 buy after slippage?
+{:ok, preview} = ExCoinbase.preview_yes(client, product_id, "10")
+ExCoinbase.extract_prediction_metadata(preview)["minimum_contracts"]
+
+# Buy $10 of YES at market; buy 20 NO contracts at a 0.35 limit
+{:ok, _} = ExCoinbase.buy_yes(client, product_id, "10")
+{:ok, _} = ExCoinbase.buy_no(client, product_id, "20", limit_price: "0.35")
+
+# Sell 5 YES contracts at market
+{:ok, _} = ExCoinbase.sell_yes(client, product_id, "5")
+
+# Positions and orders
+{:ok, positions} = ExCoinbase.list_prediction_positions(client, portfolio_uuid)
+{:ok, orders} = ExCoinbase.list_prediction_orders(client, order_status: ["OPEN"])
+```
+
+Lower-level: `ExCoinbase.Orders.create_order/2` accepts
+`prediction_metadata: %{prediction_side: "PREDICTION_SIDE_YES" | "PREDICTION_SIDE_NO"}`
+with any order configuration.
+
+### Public Market Data (no API key)
+
+```elixir
+public = ExCoinbase.public()
+{:ok, %{"iso" => _}} = ExCoinbase.server_time(public)
+{:ok, product} = ExCoinbase.public_get_product(public, "BTC-USD")
+{:ok, book} = ExCoinbase.public_get_product_book(public, "BTC-USD", limit: 10)
+```
+
+### US Futures, Convert, Payment Methods
+
+```elixir
+{:ok, summary} = ExCoinbase.futures_balance_summary(client)
+{:ok, positions} = ExCoinbase.list_futures_positions(client)
+{:ok, _} = ExCoinbase.set_intraday_margin_setting(client, "INTRADAY_MARGIN_SETTING_INTRADAY")
+
+{:ok, quote} = ExCoinbase.create_convert_quote(client, usd_account, usdc_account, "100")
+{:ok, _} = ExCoinbase.commit_convert_trade(client, quote["trade"]["id"], usd_account, usdc_account)
+
+{:ok, methods} = ExCoinbase.list_payment_methods(client)
+```
+
 ### Portfolios
 
 ```elixir
@@ -141,7 +204,7 @@ estimated = ExCoinbase.estimate_fee(summary, Decimal.new("1000"), true)
 
 ## WebSocket Streaming
 
-Real-time order updates via WebSocket:
+Authenticated user stream (`user` orders/positions and, optionally, `futures_balance_summary`):
 
 ```elixir
 {:ok, pid} = ExCoinbase.WebSocket.Connection.start_link(
@@ -160,6 +223,23 @@ receive do
 
   {:coinbase_heartbeat, %ExCoinbase.WebSocket.HeartbeatEvent{}} ->
     :ok
+end
+
+# Futures balances need no products: start with channels: [:user, :futures_balance_summary]
+# and receive {:coinbase_futures_balance_event, %ExCoinbase.WebSocket.FuturesBalanceSummaryEvent{}}
+```
+
+Public market data (no key) — `level2`, `ticker`, `ticker_batch`, `market_trades`, `candles`, `status`:
+
+```elixir
+{:ok, pid} = ExCoinbase.WebSocket.MarketDataConnection.start_link()
+ExCoinbase.WebSocket.MarketDataConnection.add_subscriber(pid, self())
+ExCoinbase.WebSocket.MarketDataConnection.subscribe(pid, "ticker", ["BTC-USD"])
+ExCoinbase.WebSocket.MarketDataConnection.subscribe(pid, "candles", ["BTC-USD"])
+
+receive do
+  {:coinbase_market_event, :ticker, %ExCoinbase.WebSocket.TickerEvent{tickers: tickers}} -> tickers
+  {:coinbase_market_event, :candles, %ExCoinbase.WebSocket.CandlesEvent{candles: candles}} -> candles
 end
 ```
 

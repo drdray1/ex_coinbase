@@ -102,7 +102,8 @@ defmodule ExCoinbase.ClientTest do
     end
 
     test "returns error for invalid PEM format" do
-      assert {:error, :not_ec_private_key} = Client.validate_private_key(Fixtures.invalid_pem())
+      assert {:error, {:invalid_private_key, _}} =
+               Client.validate_private_key(Fixtures.invalid_pem())
     end
 
     test "returns error for non-string input" do
@@ -337,6 +338,31 @@ defmodule ExCoinbase.ClientTest do
   describe "timeout/0" do
     test "returns default timeout" do
       assert Client.timeout() == 30_000
+    end
+  end
+
+  describe "0.2.0 additions" do
+    test "key_permissions/1 calls GET /key_permissions" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.request_path == "/api/v3/brokerage/key_permissions"
+        Req.Test.json(conn, %{"can_view" => true})
+      end)
+
+      assert {:ok, %{"can_view" => true}} =
+               Client.key_permissions(Fixtures.test_client(@stub_name))
+    end
+
+    test "public/1 builds a sandbox-aware unauthenticated client" do
+      client = Client.public(sandbox: true, plug: {Req.Test, @stub_name})
+      assert client.options[:base_url] =~ "api-sandbox.coinbase.com"
+      refute Map.has_key?(client.options, :coinbase_api_key)
+      assert client.options[:receive_timeout] == Client.timeout()
+      assert Client.base_url() =~ "api.coinbase.com"
+    end
+
+    test "handle_response extracts a top-level message" do
+      resp = %Req.Response{status: 500, body: %{"message" => "boom"}}
+      assert {:error, {:api_error, 500, "boom"}} = Client.handle_response({:ok, resp})
     end
   end
 end
