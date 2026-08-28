@@ -29,8 +29,9 @@ defmodule ExCoinbase.Predictions do
 
       client = ExCoinbase.new(api_key, private_key)
 
-      # Find markets
-      {:ok, markets} = ExCoinbase.Predictions.list_markets(client)
+      # Find open BTC 15-minute markets (via Kalshi's public catalogue)
+      {:ok, markets, _cursor} = ExCoinbase.Predictions.list_markets(client, series_ticker: "KXBTC15M")
+      product_id = hd(markets)["product_id"]
 
       # Preview: how many YES contracts does $10 buy?
       {:ok, preview} = ExCoinbase.Predictions.preview_yes(client, product_id, "10")
@@ -50,6 +51,7 @@ defmodule ExCoinbase.Predictions do
   """
 
   alias ExCoinbase.{Orders, Portfolio, Products}
+  alias ExCoinbase.Predictions.Kalshi
 
   @type client :: Req.Request.t()
   @type response :: {:ok, map()} | {:error, term()}
@@ -160,48 +162,65 @@ defmodule ExCoinbase.Predictions do
   # ============================================================================
 
   @doc """
-  Lists prediction-market products.
+  Lists tradeable prediction markets.
 
-  Prediction products are not part of the default product catalogue, so this
-  first asks for `product_type: "PREDICTION_MARKET"`; if the API rejects that
-  filter it falls back to paging through `get_all_products: true` (following
-  `cursor`, up to #{@max_pages} pages) and keeps products for which
-  `prediction_market?/1` is true.
+  The Advanced Trade API cannot enumerate prediction products, so this reads
+  Kalshi's public catalogue (`ExCoinbase.Predictions.Kalshi.list_markets/1`)
+  and adds a `"product_id"` (the Coinbase ID, `<ticker>-KALSHI`) to each
+  market. The `client` argument is unused but kept so the facade stays uniform.
 
   ## Options
 
-    - `:filter` - 1-arity predicate on the product map (default `prediction_market?/1`)
-    - `:product_type` - Override the type filter tried first
-    - any other `ExCoinbase.Products.list_products/2` option
+    - `:series_ticker` - e.g. `"KXBTC15M"`; `:event_ticker`; `:tickers`
+    - `:status` - default `"open"`
+    - `:limit`, `:cursor` - Kalshi pagination (cursor is returned in the second element)
+    - `:kalshi_client` - client from `ExCoinbase.Predictions.Kalshi.client/1`
 
   ## Examples
 
-      iex> list_markets(client)
-      {:ok, [%{"product_id" => "KXBTC15M-26AUG270830-30-KALSHI", ...}]}
+      iex> list_markets(client, series_ticker: "KXBTC15M")
+      {:ok, [%{"ticker" => "KXBTC15M-26AUG272300-00", "product_id" => "KXBTC15M-26AUG272300-00-KALSHI", ...}], "cursor..."}
   """
-  @spec list_markets(client(), keyword()) :: {:ok, list(map())} | {:error, term()}
-  def list_markets(client, opts \\ []) do
-    {filter, opts} = Keyword.pop(opts, :filter, &prediction_market?/1)
-    {product_type, opts} = Keyword.pop(opts, :product_type, @order_product_type)
+  @spec list_markets(client(), keyword()) ::
+          {:ok, list(map()), String.t() | nil} | {:error, term()}
+  def list_markets(_client, opts \\ []) do
+    {kalshi_client, opts} = Keyword.pop(opts, :kalshi_client)
 
-    case fetch_all_pages(client, Keyword.put(opts, :product_type, product_type)) do
-      {:ok, products} when products != [] ->
-        {:ok, Enum.filter(products, filter)}
+    opts =
+      opts
+      |> Keyword.put_new(:status, "open")
+      |> maybe_put_kw(:client, kalshi_client)
 
-      _ ->
-        with {:ok, products} <-
-               fetch_all_pages(client, Keyword.put(opts, :get_all_products, true)) do
-          {:ok, Enum.filter(products, filter)}
-        end
+    with {:ok, %{"markets" => markets} = response} <- Kalshi.list_markets(opts) do
+      {:ok, Enum.map(markets, &Kalshi.with_product_id/1), response["cursor"]}
     end
   end
 
   @doc """
-  Fetches a single prediction-market product by ID
-  (e.g. `"KXBTC15M-26AUG270830-30-KALSHI"`).
+  Scans Coinbase's own product catalogue (`get_all_products`, all pages) for
+  prediction products. As of August 2026 Coinbase returns none — prefer
+  `list_markets/2` — but this is kept in case the catalogue starts including them.
   """
-  @spec get_market(client(), product_id()) :: response()
-  def get_market(client, product_id), do: Products.get_product(client, product_id)
+  @spec scan_coinbase_catalogue(client(), keyword()) :: {:ok, list(map())} | {:error, term()}
+  def scan_coinbase_catalogue(client, opts \\ []) do
+    {filter, opts} = Keyword.pop(opts, :filter, &prediction_market?/1)
+
+    with {:ok, products} <- fetch_all_pages(client, Keyword.put(opts, :get_all_products, true)) do
+      {:ok, Enum.filter(products, filter)}
+    end
+  end
+
+  @doc """
+  Fetches a single prediction market by Coinbase product ID or Kalshi ticker
+  from the Kalshi catalogue (Coinbase's `GET /products/{id}` returns 404 for
+  prediction products). The result includes `"product_id"`.
+  """
+  @spec get_market(client(), product_id(), keyword()) :: response()
+  def get_market(_client, product_id, opts \\ []) do
+    with {:ok, %{"market" => market}} <- Kalshi.get_market(product_id, opts) do
+      {:ok, Kalshi.with_product_id(market)}
+    end
+  end
 
   @doc """
   True when a product map looks like a prediction market: `product_type`
@@ -370,4 +389,8 @@ defmodule ExCoinbase.Predictions do
   @spec maybe_put(map(), atom(), term()) :: map()
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  @spec maybe_put_kw(keyword(), atom(), term()) :: keyword()
+  defp maybe_put_kw(opts, _key, nil), do: opts
+  defp maybe_put_kw(opts, key, value), do: Keyword.put(opts, key, value)
 end

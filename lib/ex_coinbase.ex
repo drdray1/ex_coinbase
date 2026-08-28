@@ -40,7 +40,7 @@ defmodule ExCoinbase do
 
   ## Prediction Markets
 
-      {:ok, markets} = ExCoinbase.list_markets(client)
+      {:ok, markets, _cursor} = ExCoinbase.list_markets(client, series_ticker: "KXBTC15M")
       {:ok, preview} = ExCoinbase.preview_yes(client, product_id, "10")
       {:ok, resp} = ExCoinbase.buy_yes(client, product_id, "10")
 
@@ -361,8 +361,11 @@ defmodule ExCoinbase do
   @doc "Lists prediction-market products."
   defdelegate list_markets(client, opts \\ []), to: Predictions
 
-  @doc "Fetches a single prediction-market product."
-  defdelegate get_market(client, product_id), to: Predictions
+  @doc "Fetches a single prediction market (from the Kalshi catalogue)."
+  defdelegate get_market(client, product_id, opts \\ []), to: Predictions
+
+  @doc "Scans Coinbase's own product catalogue for prediction products (currently empty)."
+  defdelegate scan_coinbase_catalogue(client, opts \\ []), to: Predictions
 
   @doc "Lists prediction-market positions in a portfolio."
   defdelegate list_prediction_positions(client, portfolio_uuid),

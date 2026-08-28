@@ -2,6 +2,7 @@ defmodule ExCoinbaseTest do
   use ExUnit.Case, async: true
 
   alias ExCoinbase.Fixtures
+  alias ExCoinbase.Predictions.Kalshi
 
   @stub_name ExCoinbaseTest
 
@@ -704,6 +705,12 @@ defmodule ExCoinbaseTest do
             "/api/v3/brokerage/orders/preview" ->
               %{"prediction_order_metadata" => %{"minimum_contracts" => "2"}}
 
+            "/trade-api/v2/markets" ->
+              %{"markets" => [%{"ticker" => "PM"}]}
+
+            "/trade-api/v2/markets/PM" ->
+              %{"market" => %{"ticker" => "PM"}}
+
             path ->
               %{"path" => path, "method" => conn.method, "query" => conn.query_string}
           end
@@ -766,10 +773,15 @@ defmodule ExCoinbaseTest do
       assert {:ok, preview} = ExCoinbase.preview_yes(client, "PM", "1")
       assert {:ok, _} = ExCoinbase.preview_no(client, "PM", "1")
       assert ExCoinbase.extract_prediction_metadata(preview)["minimum_contracts"] == "2"
-      assert {:ok, [%{"product_id" => "PM"}]} = ExCoinbase.list_markets(client)
+      kalshi = Kalshi.client(plug: {Req.Test, @stub_name})
 
-      assert {:ok, %{"path" => "/api/v3/brokerage/products/PM"}} =
-               ExCoinbase.get_market(client, "PM")
+      assert {:ok, [%{"product_id" => "PM-KALSHI"}], nil} =
+               ExCoinbase.list_markets(client, kalshi_client: kalshi)
+
+      assert {:ok, %{"product_id" => "PM-KALSHI"}} =
+               ExCoinbase.get_market(client, "PM", client: kalshi)
+
+      assert {:ok, [%{"product_id" => "PM"}]} = ExCoinbase.scan_coinbase_catalogue(client)
 
       assert {:ok, [%{"cbrn" => "1"}]} = ExCoinbase.list_prediction_positions(client, "pf")
       assert {:ok, [%{"order_id" => "1"}]} = ExCoinbase.list_prediction_orders(client)

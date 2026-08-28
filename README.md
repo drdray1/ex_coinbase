@@ -14,7 +14,7 @@ Add `ex_coinbase` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_coinbase, "~> 0.2.1"}
+    {:ex_coinbase, "~> 0.2.2"}
   ]
 end
 ```
@@ -135,11 +135,15 @@ Kalshi event contracts trade through the normal order endpoints with a YES/NO
 fill-or-kill. NO is a short on the YES book — the API handles that when you
 pass the side.
 
+Coinbase's own product endpoints cannot list prediction markets, so discovery
+goes through Kalshi's public catalogue (no key needed) via
+`ExCoinbase.Predictions.Kalshi`; product IDs are `<kalshi ticker>-KALSHI`.
+
 ```elixir
-# Discover markets (prediction products are not in the default catalogue)
-{:ok, markets} = ExCoinbase.list_markets(client)
-product_id = hd(markets)["product_id"]
-{:ok, market} = ExCoinbase.get_market(client, "KXBTC15M-26AUG270830-30-KALSHI")
+# Discover open BTC 15-minute markets
+{:ok, markets, _cursor} = ExCoinbase.list_markets(client, series_ticker: "KXBTC15M")
+%{"product_id" => product_id, "yes_ask_dollars" => yes_ask} = hd(markets)
+{:ok, market} = ExCoinbase.get_market(client, product_id)
 
 # Preview: how many YES contracts does $10 buy after slippage?
 {:ok, preview} = ExCoinbase.preview_yes(client, product_id, "10")

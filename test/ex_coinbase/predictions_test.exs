@@ -3,6 +3,7 @@ defmodule ExCoinbase.PredictionsTest do
 
   alias ExCoinbase.Fixtures
   alias ExCoinbase.Predictions
+  alias ExCoinbase.Predictions.Kalshi
 
   @stub_name ExCoinbase.PredictionsTest
   @product "KXBTC-26SEP30-100K-KALSHI"
@@ -168,38 +169,67 @@ defmodule ExCoinbase.PredictionsTest do
   end
 
   describe "discovery and positions" do
-    test "list_markets uses the PREDICTION_MARKET type filter when the API accepts it" do
+    test "list_markets reads the Kalshi catalogue and adds Coinbase product IDs" do
       Req.Test.expect(@stub_name, fn conn ->
-        assert conn.request_path == "/api/v3/brokerage/products"
-        assert conn.query_string == "product_type=PREDICTION_MARKET"
+        assert conn.request_path == "/trade-api/v2/markets"
+        assert conn.query_string == "status=open&series_ticker=KXBTC15M"
 
         Req.Test.json(conn, %{
-          "products" => [%{"product_id" => @product, "product_type" => "PREDICTION_MARKET"}],
-          "pagination" => %{"has_next" => false}
+          "markets" => [%{"ticker" => "KXBTC15M-26AUG272300-00", "yes_ask_dollars" => "0.52"}],
+          "cursor" => "next"
         })
       end)
 
-      assert {:ok, [%{"product_id" => @product}]} =
-               Predictions.list_markets(Fixtures.test_client(@stub_name))
+      kalshi = Kalshi.client(plug: {Req.Test, @stub_name})
+
+      assert {:ok, [market], "next"} =
+               Predictions.list_markets(Fixtures.test_client(@stub_name),
+                 series_ticker: "KXBTC15M",
+                 kalshi_client: kalshi
+               )
+
+      assert market["product_id"] == "KXBTC15M-26AUG272300-00-KALSHI"
+      assert market["yes_ask_dollars"] == "0.52"
     end
 
-    test "list_markets falls back to paging get_all_products and filters by -KALSHI suffix" do
+    test "list_markets propagates Kalshi errors" do
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"error" => "boom"})
+      end)
+
+      kalshi =
+        Kalshi.client(plug: {Req.Test, @stub_name})
+        |> Req.Request.merge_options(retry: false)
+
+      assert {:error, {:api_error, 500, "boom"}} =
+               Predictions.list_markets(Fixtures.test_client(@stub_name), kalshi_client: kalshi)
+    end
+
+    test "get_market fetches from Kalshi by product id and annotates it" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.request_path == "/trade-api/v2/markets/KXBTC-26SEP30-100K"
+        Req.Test.json(conn, %{"market" => %{"ticker" => "KXBTC-26SEP30-100K"}})
+      end)
+
+      kalshi = Kalshi.client(plug: {Req.Test, @stub_name})
+
+      assert {:ok, %{"product_id" => @product, "ticker" => "KXBTC-26SEP30-100K"}} =
+               Predictions.get_market(Fixtures.test_client(@stub_name), @product, client: kalshi)
+    end
+
+    test "scan_coinbase_catalogue pages get_all_products and filters by -KALSHI suffix" do
       Req.Test.stub(@stub_name, fn conn ->
         query = URI.decode_query(conn.query_string)
+        assert query["get_all_products"] == "true"
 
-        cond do
-          query["product_type"] == "PREDICTION_MARKET" ->
-            conn |> Plug.Conn.put_status(400) |> Req.Test.json(%{"error" => "INVALID_ARGUMENT"})
-
-          query["cursor"] == nil ->
-            assert query["get_all_products"] == "true"
-
+        case query["cursor"] do
+          nil ->
             Req.Test.json(conn, %{
               "products" => [%{"product_id" => "BTC-USD", "product_type" => "SPOT"}],
               "pagination" => %{"has_next" => true, "next_cursor" => "c2"}
             })
 
-          query["cursor"] == "c2" ->
+          "c2" ->
             Req.Test.json(conn, %{
               "products" => [
                 %{"product_id" => @product, "product_type" => "SPOT"},
@@ -210,53 +240,28 @@ defmodule ExCoinbase.PredictionsTest do
         end
       end)
 
-      assert {:ok, markets} = Predictions.list_markets(Fixtures.test_client(@stub_name))
+      assert {:ok, markets} =
+               Predictions.scan_coinbase_catalogue(Fixtures.test_client(@stub_name))
+
       assert Enum.map(markets, & &1["product_id"]) == [@product, "X"]
     end
 
-    test "list_markets falls back when the type filter returns nothing" do
-      Req.Test.stub(@stub_name, fn conn ->
-        query = URI.decode_query(conn.query_string)
-
-        if query["product_type"] == "PREDICTION_MARKET" do
-          Req.Test.json(conn, %{"products" => []})
-        else
-          Req.Test.json(conn, %{"products" => [%{"product_id" => @product}]})
-        end
-      end)
-
-      assert {:ok, [%{"product_id" => @product}]} =
-               Predictions.list_markets(Fixtures.test_client(@stub_name))
-    end
-
-    test "list_markets propagates errors from the fallback" do
-      Req.Test.stub(@stub_name, fn conn ->
-        conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"error" => "boom"})
-      end)
-
-      assert {:error, {:api_error, 500, "boom"}} =
-               Predictions.list_markets(Fixtures.test_client(@stub_name))
-    end
-
-    test "get_market fetches a single product" do
-      Req.Test.expect(@stub_name, fn conn ->
-        assert conn.request_path == "/api/v3/brokerage/products/#{@product}"
-        Req.Test.json(conn, %{"product_id" => @product})
-      end)
-
-      assert {:ok, %{"product_id" => @product}} =
-               Predictions.get_market(Fixtures.test_client(@stub_name), @product)
-    end
-
-    test "list_markets accepts a custom filter" do
+    test "scan_coinbase_catalogue accepts a custom filter and propagates errors" do
       Req.Test.stub(@stub_name, fn conn ->
         Req.Test.json(conn, %{"products" => [%{"product_id" => "A"}, %{"product_id" => "B"}]})
       end)
 
       assert {:ok, [%{"product_id" => "B"}]} =
-               Predictions.list_markets(Fixtures.test_client(@stub_name),
+               Predictions.scan_coinbase_catalogue(Fixtures.test_client(@stub_name),
                  filter: &(&1["product_id"] == "B")
                )
+
+      Req.Test.stub(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"error" => "boom"})
+      end)
+
+      assert {:error, {:api_error, 500, "boom"}} =
+               Predictions.scan_coinbase_catalogue(Fixtures.test_client(@stub_name))
     end
 
     test "list_positions returns prediction positions from the portfolio breakdown" do
@@ -344,7 +349,7 @@ defmodule ExCoinbase.PredictionsTest do
       assert {:ok, _} = Predictions.sell_no(client, @product, "1")
       assert {:ok, _} = Predictions.preview_no(client, @product, "1")
       assert {:ok, _} = Predictions.preview_yes(client, @product, "1")
-      assert {:ok, []} = Predictions.list_markets(client)
+      assert {:ok, []} = Predictions.scan_coinbase_catalogue(client)
       assert {:ok, []} = Predictions.list_orders(client)
 
       assert {:ok, _} =

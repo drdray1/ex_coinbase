@@ -1,7 +1,7 @@
 defmodule ExCoinbase.MixProject do
   use Mix.Project
 
-  @version "0.2.1"
+  @version "0.2.2"
   @source_url "https://github.com/drdray1/ex_coinbase"
 
   def project do
@@ -67,6 +67,7 @@ defmodule ExCoinbase.MixProject do
           ExCoinbase.Products,
           ExCoinbase.Orders,
           ExCoinbase.Predictions,
+          ExCoinbase.Predictions.Kalshi,
           ExCoinbase.Fees,
           ExCoinbase.Portfolio,
           ExCoinbase.Futures,

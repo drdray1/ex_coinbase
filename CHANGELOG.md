@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.2.2] - 2026-08-27
+
+Verified live: Coinbase's product endpoints cannot enumerate prediction
+markets (`product_type=PREDICTION_MARKET` is a 500, `GET /products/{id}` is 404).
+
+### Added
+
+- `ExCoinbase.Predictions.Kalshi` — public Kalshi catalogue client
+  (`list_markets/1`, `get_market/2`, `list_events/1`, `list_series/1`,
+  `to_product_id/1`, `from_product_id/1`); config keys `kalshi_url`,
+  `kalshi_req_options`.
+- `Predictions.scan_coinbase_catalogue/2` (the old catalogue scan, kept in
+  case Coinbase starts listing prediction products).
+
+### Changed (breaking for 0.2.1 callers)
+
+- `Predictions.list_markets/2` now reads Kalshi's catalogue and returns
+  `{:ok, markets, cursor}`; each market carries `"product_id"` (`<ticker>-KALSHI`).
+  Options: `series_ticker`, `event_ticker`, `tickers`, `status` (default open),
+  `limit`, `cursor`, `kalshi_client`.
+- `Predictions.get_market/3` fetches from Kalshi (Coinbase returns 404).
+
 ## [0.2.1] - 2026-08-27
 
 Prediction markets verified against a live account.
