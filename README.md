@@ -14,7 +14,7 @@ Add `ex_coinbase` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_coinbase, "~> 0.2.3"}
+    {:ex_coinbase, "~> 0.2.4"}
   ]
 end
 ```
@@ -138,6 +138,13 @@ pass the side.
 Coinbase's own product endpoints cannot list prediction markets, so discovery
 goes through Kalshi's public catalogue (no key needed) via
 `ExCoinbase.Predictions.Kalshi`; product IDs are `<kalshi ticker>-KALSHI`.
+
+> **Read-only for now.** As of 2026-08-28 the Advanced Trade API rejects
+> prediction product IDs on the order, preview and market-data endpoints
+> (`Invalid product_id`) even for contracts traded via the Coinbase app; the app
+> uses an internal trading proxy. Order history, fills, positions and discovery
+> work. The order helpers below are built to the published schema and will work
+> once Coinbase opens the endpoints.
 
 ```elixir
 # Discover open BTC 15-minute markets

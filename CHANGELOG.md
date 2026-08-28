@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.2.4] - 2026-08-28
+
+### Documentation
+
+- Prediction markets: documented that, as of 2026-08-28, Coinbase's public
+  Advanced Trade API rejects Kalshi product IDs on `POST /orders`,
+  `POST /orders/preview`, `GET /best_bid_ask` and `GET /product_book`
+  (`Invalid product_id`) even for contracts traded through the Coinbase app.
+  History, fills, positions and Kalshi-backed discovery work; the order
+  helpers follow the published schema and are kept for when the endpoints open.
+
 ## [0.2.3] - 2026-08-28
 
 ### Fixed

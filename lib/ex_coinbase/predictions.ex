@@ -7,6 +7,21 @@ defmodule ExCoinbase.Predictions do
   YES or NO side. This module wraps `ExCoinbase.Orders`, `ExCoinbase.Products`
   and `ExCoinbase.Portfolio` with that vocabulary.
 
+  > #### Order placement is not available via the public API (as of 2026-08-28) {: .warning}
+  >
+  > Verified against a live account with a trade-enabled key: `POST /orders`,
+  > `POST /orders/preview`, `GET /best_bid_ask` and `GET /product_book` all
+  > reject Kalshi product IDs with `Invalid product_id` — even for contracts
+  > the same account traded through the Coinbase app minutes earlier. The
+  > app places these orders through an internal proxy
+  > (`order_data_source: ORDER_DATA_SOURCE_TRADING_PROXY`). What *does* work
+  > through this API: order history, fills, portfolio positions and account
+  > listing for prediction markets, plus market discovery via Kalshi.
+  >
+  > The `buy_*`/`sell_*`/`preview_*` functions build the request exactly as the
+  > OpenAPI spec describes and will start working if Coinbase enables the
+  > endpoints; until then expect `{:error, {:api_error, 400, "Invalid product_id"}}`.
+
   ## How contracts work
 
   - Markets are Kalshi event contracts; product IDs are Kalshi tickers with a
@@ -21,7 +36,8 @@ defmodule ExCoinbase.Predictions do
     `quote_size` is a USD amount.
   - Orders and fills report `product_type: "PREDICTION_MARKET"`; positions
     show up in the portfolio breakdown under `prediction_markets_positions`
-    with `side` LONG (YES) or SHORT (NO).
+    with `side` LONG (YES) or SHORT (NO). A "BUY NO" order shows up in
+    `list_fills` as `side: "SELL"` (it is a sale of YES).
   - Prediction products are not included in the default product list; see
     `list_markets/2` and `get_market/2`.
 
