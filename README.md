@@ -14,7 +14,7 @@ Add `ex_coinbase` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_coinbase, "~> 0.2.2"}
+    {:ex_coinbase, "~> 0.2.3"}
   ]
 end
 ```

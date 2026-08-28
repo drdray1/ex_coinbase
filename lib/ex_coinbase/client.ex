@@ -275,13 +275,20 @@ defmodule ExCoinbase.Client do
     end
   end
 
+  # Coinbase 400s look like %{"error" => "unknown", "error_details" => "...", "message" => "..."};
+  # the detail fields are the informative ones, so they win over the bare code.
   @spec extract_error_message(map() | term()) :: String.t()
-  defp extract_error_message(%{"error" => error}) when is_binary(error), do: error
-  defp extract_error_message(%{"message" => message}) when is_binary(message), do: message
+  defp extract_error_message(%{"error_details" => details})
+       when is_binary(details) and details != "",
+       do: details
+
+  defp extract_error_message(%{"message" => message}) when is_binary(message) and message != "",
+    do: message
 
   defp extract_error_message(%{"error" => %{"message" => message}}) when is_binary(message),
     do: message
 
+  defp extract_error_message(%{"error" => error}) when is_binary(error), do: error
   defp extract_error_message(_), do: "Unknown error"
 
   defp maybe_add_plug(opts, nil), do: opts

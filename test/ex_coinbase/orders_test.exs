@@ -676,4 +676,26 @@ defmodule ExCoinbase.OrdersTest do
       assert "TWAP" in Orders.valid_order_types()
     end
   end
+
+  describe "preview_order/2 body" do
+    test "never sends client_order_id (the preview endpoint rejects it)" do
+      Req.Test.expect(@stub_name, fn conn ->
+        assert conn.request_path == "/api/v3/brokerage/orders/preview"
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        params = Jason.decode!(body)
+        refute Map.has_key?(params, "client_order_id")
+        assert params["prediction_metadata"] == %{"prediction_side" => "PREDICTION_SIDE_YES"}
+        Req.Test.json(conn, %{"order_total" => "1"})
+      end)
+
+      assert {:ok, _} =
+               Orders.preview_order(Fixtures.test_client(@stub_name), %{
+                 client_order_id: "ignored",
+                 product_id: "KXBTC15M-26AUG272345-45-KALSHI",
+                 side: "BUY",
+                 order_configuration: %{market_market_fok: %{base_size: "2"}},
+                 prediction_metadata: %{prediction_side: "PREDICTION_SIDE_YES"}
+               })
+    end
+  end
 end

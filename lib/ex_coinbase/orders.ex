@@ -563,7 +563,9 @@ defmodule ExCoinbase.Orders do
   Previews an order without executing it.
 
   Takes the same parameters as `create_order/2` and returns estimated
-  commission, fees, quote information, and best bid/ask.
+  commission, fees, quote information, and best bid/ask. Unlike
+  `create_order/2`, the preview endpoint rejects `client_order_id`, so it is
+  never sent here.
 
   ## Examples
 
@@ -577,7 +579,7 @@ defmodule ExCoinbase.Orders do
   @spec preview_order(client(), map()) :: response()
   def preview_order(client, params) do
     with {:ok, validated} <- validate_create_order_params(params) do
-      body = build_order_body(validated)
+      body = validated |> build_order_body() |> Map.delete(:client_order_id)
 
       client
       |> Req.post(url: "/orders/preview", json: body)

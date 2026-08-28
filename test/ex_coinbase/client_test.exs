@@ -365,4 +365,23 @@ defmodule ExCoinbase.ClientTest do
       assert {:error, {:api_error, 500, "boom"}} = Client.handle_response({:ok, resp})
     end
   end
+
+  describe "error message extraction" do
+    test "prefers error_details, then message, over the bare error code" do
+      body = %{"error" => "unknown", "error_details" => "proto: unknown field", "message" => "m"}
+
+      assert {:error, {:api_error, 400, "proto: unknown field"}} =
+               Client.handle_response({:ok, %Req.Response{status: 400, body: body}})
+
+      body = %{"error" => "INVALID_ARGUMENT", "message" => "bad size", "error_details" => ""}
+
+      assert {:error, {:api_error, 400, "bad size"}} =
+               Client.handle_response({:ok, %Req.Response{status: 400, body: body}})
+
+      body = %{"error" => "INVALID_ARGUMENT"}
+
+      assert {:error, {:api_error, 400, "INVALID_ARGUMENT"}} =
+               Client.handle_response({:ok, %Req.Response{status: 400, body: body}})
+    end
+  end
 end

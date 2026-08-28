@@ -1,7 +1,7 @@
 defmodule ExCoinbase.MixProject do
   use Mix.Project
 
-  @version "0.2.2"
+  @version "0.2.3"
   @source_url "https://github.com/drdray1/ex_coinbase"
 
   def project do

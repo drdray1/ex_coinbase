@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.2.3] - 2026-08-28
+
+### Fixed
+
+- `Orders.preview_order/2` (and every `Predictions.preview_*`) sent
+  `client_order_id`, which `POST /orders/preview` rejects with
+  `proto: unknown field "client_order_id"` — previews have failed with a
+  400 since 0.1.x. It is no longer sent.
+- API error tuples now carry Coinbase's `error_details`/`message` instead of
+  the bare `"unknown"` code, e.g. `{:api_error, 400, "proto: unknown field ..."}`.
+
 ## [0.2.2] - 2026-08-27
 
 Verified live: Coinbase's product endpoints cannot enumerate prediction
