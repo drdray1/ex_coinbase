@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.2.5] - 2026-10-24
+
+### Changed
+
+- Updated dependencies to their latest versions allowed by `mix.exs` (`mix.lock` only).
+
 ## [0.2.4] - 2026-08-28
 
 ### Documentation
