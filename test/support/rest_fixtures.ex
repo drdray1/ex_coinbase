@@ -34,6 +34,48 @@ defmodule ExCoinbase.RestFixtures do
     }
   end
 
+  def perpetual_product do
+    %{
+      "product_id" => "BIP-20DEC30-CDE",
+      "price" => "81220",
+      "mid_market_price" => "81212.5",
+      "volume_24h" => "323435",
+      "approximate_quote_24h_volume" => "262693907",
+      "product_type" => "FUTURE",
+      "display_name" => "BTC PERP",
+      "new_at" => "2025-07-18T13:00:00Z",
+      "trading_disabled" => false,
+      "future_product_details" => %{
+        "venue" => "cde",
+        "contract_size" => "0.01",
+        "contract_root_unit" => "BTC",
+        "contract_expiry_type" => "EXPIRING",
+        "funding_interval" => "3600s",
+        "open_interest" => "186914",
+        "funding_rate" => "0.000008",
+        "funding_time" => "2026-10-28T20:00:00Z",
+        "settlement_price" => "80700",
+        "index_price" => "81000"
+      }
+    }
+  end
+
+  def dated_future_product do
+    %{
+      "product_id" => "BIT-30OCT26-CDE",
+      "price" => "81225",
+      "product_type" => "FUTURE",
+      "future_product_details" => %{
+        "contract_size" => "0.01",
+        "contract_expiry_type" => "EXPIRING",
+        "funding_interval" => nil,
+        "funding_rate" => "",
+        "open_interest" => "52777",
+        "index_price" => ""
+      }
+    }
+  end
+
   def public_product_response do
     %{
       "product_id" => "BTC-USD",

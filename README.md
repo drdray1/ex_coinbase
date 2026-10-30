@@ -14,7 +14,7 @@ Add `ex_coinbase` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_coinbase, "~> 0.2.5"}
+    {:ex_coinbase, "~> 0.2.6"}
   ]
 end
 ```
@@ -179,6 +179,19 @@ public = ExCoinbase.public()
 {:ok, %{"iso" => _}} = ExCoinbase.server_time(public)
 {:ok, product} = ExCoinbase.public_get_product(public, "BTC-USD")
 {:ok, book} = ExCoinbase.public_get_product_book(public, "BTC-USD", limit: 10)
+```
+
+### Perpetuals: open interest, funding, basis (no API key)
+
+Live values for Coinbase's US perpetuals (`BIP-20DEC30-CDE` "BTC PERP", ...).
+Coinbase keeps no history of these, so poll to build a series.
+
+```elixir
+{:ok, perps} = ExCoinbase.list_perpetuals(public)
+{:ok, btc} = ExCoinbase.get_perpetual(public, "BIP-20DEC30-CDE")
+btc.open_interest_base  # BTC
+btc.funding_rate        # per funding interval (btc.funding_interval_seconds)
+btc.basis_pct           # last price vs index price, in percent
 ```
 
 ### US Futures, Convert, Payment Methods

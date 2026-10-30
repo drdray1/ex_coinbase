@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.2.6] - 2026-10-29
+
+### Added
+
+- `ExCoinbase.Perpetuals` (`list_perpetuals/2`, `get_perpetual/2`): typed
+  snapshots of the US perpetuals' live open interest (contracts, base and
+  USD), funding rate, time and interval, index price and basis. Public
+  endpoints, no API key. Coinbase publishes no history of these values.
+
 ## [0.2.5] - 2026-10-24
 
 ### Changed

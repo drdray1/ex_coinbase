@@ -67,6 +67,7 @@ defmodule ExCoinbase do
     Futures,
     Orders,
     PaymentMethods,
+    Perpetuals,
     Portfolio,
     Predictions,
     Products,
@@ -406,6 +407,16 @@ defmodule ExCoinbase do
   defdelegate public_get_product_book(client, product_id, opts \\ []),
     to: Public,
     as: :get_product_book
+
+  # ============================================================================
+  # Perpetuals (live open interest, funding, index price)
+  # ============================================================================
+
+  @doc "Lists every US perpetual as a typed snapshot (open interest, funding, basis)."
+  defdelegate list_perpetuals(client, opts \\ []), to: Perpetuals, as: :list
+
+  @doc "Gets one US perpetual's snapshot, or `{:error, :not_perpetual}`."
+  defdelegate get_perpetual(client, product_id), to: Perpetuals, as: :get
 
   # ============================================================================
   # Convert
